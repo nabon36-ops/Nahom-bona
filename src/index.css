@@ -1,0 +1,69 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: "Plus Jakarta Sans", "Noto Sans Ethiopic", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    --access-font-scale: 1;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    font-size: calc(16px * var(--access-font-scale));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-[#F6F8FA] text-[#1F2328] dark:bg-[#0D1117] dark:text-[#E6EDF3] transition-colors duration-150;
+  }
+
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-[#0969DA] dark:outline-[#58A6FF];
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Reduced motion support */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* High contrast mode adjustments */
+html.high-contrast body {
+  @apply bg-white text-black dark:bg-black dark:text-white;
+}
+
+html.high-contrast .surface-card {
+  @apply border-2 border-black dark:border-white;
+}
+
+/* Color-vision deficiency pattern and accessible accent overrides */
+html.cvd-deuteranopia {
+  --accent-primary: #005AB5;
+  --accent-positive: #0072B2;
+  --accent-warning: #E69F00;
+}
+
+html.cvd-tritanopia {
+  --accent-primary: #D55E00;
+  --accent-positive: #009E73;
+  --accent-warning: #CC79A7;
+}
+
+html.cvd-achromatopsia {
+  filter: grayscale(100%) contrast(1.1);
+}
