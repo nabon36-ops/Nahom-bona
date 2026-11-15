@@ -682,7 +682,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
               >
                 {t.onboarding.chooseLanguageTitle}
               </h1>
-              <p className="text-sm sm:text-base text-[#2c037e] font-bold">
+              <p className="text-sm sm:text-base text-[#000000] font-bold">
                 {t.onboarding.chooseLanguageSubtitle}
               </p>
             </div>
