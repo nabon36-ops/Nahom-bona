@@ -1,4 +1,4 @@
-export type LanguageCode = "en" | "am" | "om" | "so" | "ti";
+export type LanguageCode = "en" | "am" | "om" | "ar" | "fr" | "sw" | "so" | "ti";
 
 export type DisabilityType =
   | "blind"
@@ -20,6 +20,7 @@ export type SignLanguageSystem = "EthSL" | "ASL" | "IS";
 
 export type AppView =
   | "dashboard"
+  | "vision"
   | "courses"
   | "resources"
   | "progress"
@@ -58,6 +59,7 @@ export interface AccessibilityPreferences {
   signLanguageSystem: SignLanguageSystem;
   signDockOpen: boolean;
   screenReaderVerbosity: "standard" | "detailed";
+  speechRate?: number; // 0.75 to 1.15
 }
 
 export interface Course {

@@ -55,6 +55,7 @@ interface OnboardingFlowProps {
     email: string;
     careerPlan: CareerPlan;
   }) => void;
+  onOpenVisualAssistant?: () => void;
 }
 
 const COLOR_CONFUSION_OPTIONS: Array<{ id: ColorConfusionOption; label: string }> = [
@@ -110,6 +111,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
   onTriggerVoice,
   onStopVoice,
   onCompleteOnboarding,
+  onOpenVisualAssistant,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [name, setName] = useState(user.name || "");
@@ -843,14 +845,31 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                 <ArrowLeft className="w-4 h-4" aria-hidden="true" />
                 <span>{t.onboarding.backBtn}</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setStep(3)}
-                className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-lg bg-[#0969DA] hover:bg-[#0550AE] text-white dark:bg-[#238636] dark:hover:bg-[#2EA043] whitespace-nowrap"
-              >
-                <span>{t.onboarding.continueBtn}</span>
-                <ArrowRight className="w-4 h-4" aria-hidden="true" />
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                {isBlindSelected && onOpenVisualAssistant && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      qaRunTokenRef.current += 1;
+                      stopActiveListening();
+                      onStopVoice();
+                      onOpenVisualAssistant();
+                    }}
+                    className="inline-flex items-center gap-2 px-5 py-3 text-sm font-bold rounded-lg border-2 border-[#0969DA] bg-white dark:bg-[#161B22] text-[#0969DA] dark:text-[#58A6FF] hover:bg-[#0969DA]/10 whitespace-nowrap"
+                  >
+                    <Eye className="w-4 h-4" aria-hidden="true" />
+                    <span>{t.nav.vision}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setStep(3)}
+                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-lg bg-[#0969DA] hover:bg-[#0550AE] text-white dark:bg-[#238636] dark:hover:bg-[#2EA043] whitespace-nowrap"
+                >
+                  <span>{t.onboarding.continueBtn}</span>
+                  <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </section>
         )}

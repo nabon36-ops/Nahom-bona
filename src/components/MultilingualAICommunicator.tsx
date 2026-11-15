@@ -6,6 +6,7 @@ import {
   UserProfile,
 } from "../types";
 import { LANGUAGES } from "../i18n/translations";
+import { apiUrl } from "../services/apiConfig";
 import {
   finishCurrentListeningNow,
   listenForUserSpeech,
@@ -112,6 +113,45 @@ const LABELS: Record<
     transcribedLabel: "ዝተገልበጠ ዘረባ",
     loadingText: "AI ነዚ ገጽ ብትግርኛ የንብብ ኣሎ...",
   },
+  ar: {
+    title: "قارئ ومساعد AI باللغة العربية",
+    readingBadge: "يقرأ الصفحة ويتواصل باللغة العربية",
+    refreshBtn: "إعادة قراءة الصفحة (AI)",
+    transcribeBtn: "تحويل الصوت لنص (ميكروفون)",
+    doneSpeakingBtn: "أنهيت التحدث",
+    transcribing: "جارٍ التحويل...",
+    placeholder: "اسأل أو أجب الذكاء الاصطناعي بالعربية...",
+    sendBtn: "إرسال",
+    listenBtn: "استماع",
+    transcribedLabel: "النص المنسوخ",
+    loadingText: "يقوم AI بقراءة الصفحة بالعربية...",
+  },
+  fr: {
+    title: "Lecteur & Communicateur IA en Français",
+    readingBadge: "Lit la page et communique en français",
+    refreshBtn: "Relire la page (IA)",
+    transcribeBtn: "Transcrire l'audio (Micro)",
+    doneSpeakingBtn: "J'ai fini",
+    transcribing: "Transcription...",
+    placeholder: "Posez une question à l'IA en français...",
+    sendBtn: "Envoyer",
+    listenBtn: "Écouter",
+    transcribedLabel: "Audio transcrit",
+    loadingText: "L'IA lit la page en français...",
+  },
+  sw: {
+    title: "Msomaji na Msaidizi wa AI kwa Kiswahili",
+    readingBadge: "Inasoma ukurasa na kuwasiliana kwa Kiswahili",
+    refreshBtn: "Soma Ukurasa Tena (AI)",
+    transcribeBtn: "Nakili Sauti (Mikrofoni)",
+    doneSpeakingBtn: "Nimemaliza",
+    transcribing: "Inanakili...",
+    placeholder: "Uliza au jibu AI kwa Kiswahili...",
+    sendBtn: "Tuma",
+    listenBtn: "Sikiliza",
+    transcribedLabel: "Sauti iliyonakiliwa",
+    loadingText: "AI inasoma ukurasa kwa Kiswahili...",
+  },
 };
 
 export const MultilingualAICommunicator: React.FC<
@@ -144,7 +184,7 @@ export const MultilingualAICommunicator: React.FC<
     async (messageToSend = "") => {
       setLoading(true);
       try {
-        const res = await fetch("/api/ai-communicate", {
+        const res = await fetch(apiUrl("/api/ai-communicate"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

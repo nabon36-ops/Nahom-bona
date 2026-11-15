@@ -226,4 +226,115 @@ export const VOICE_SCRIPTS: Record<LanguageCode, LocalizedVoiceScripts> = {
     specificPromptSuffix:
       "ዋና ኣማራጺታት ንምስማዕ 'major options' በል፣ ወይ 'enroll 1' ወይ 'complete lesson' በል።",
   },
+  ar: {
+    step2BlindIntroAndPrompt:
+      "المساعد الصوتي باللغة العربية نشط الآن. قل 'متابعة' أو 'continue' للانتقال إلى نموذج التسجيل وخطة العمل، وسأقرأ لك كل سؤال وأسجل إجابتك.",
+    step3StartNotice:
+      "بدأ النموذج الصوتي. سأطرح كل سؤال ثم أستمع إلى إجابتك وأملأ الحقل تلقائياً.",
+    listeningLabel: "جارٍ الاستماع لصوتك...",
+    transcribingLabel: "جارٍ معالجة إجابتك...",
+    speakingLabel: "جارٍ قراءة السؤال...",
+    doneSpeakingBtn: "أنهيت التحدث",
+    answerByVoiceBtn: "استمع الآن",
+    repeatBtn: "إعادة",
+    skipBtn: "تخطي / التالي",
+    pauseVoiceBtn: "إيقاف الأسئلة الصوتية",
+    resumeVoiceBtn: "بدء الأسئلة الصوتية",
+    voiceReplyPlaceholder: "أو اكتب إجابتك هنا إذا لم يتوفر الميكروفون...",
+    sendVoiceFallbackBtn: "تعبئة الإجابة",
+    didNotHearPrompt: "لم أسمع صوتاً واضحاً. اضغط استمع الآن أو اكتب إجابتك في الصندوق.",
+    questions: {
+      name: "السؤال 1 من 8: ما هو اسمك الكامل؟ تحدث الآن.",
+      email: "السؤال 2 من 8: ما هو بريدك الإلكتروني؟",
+      targetTrack:
+        "السؤال 3 من 8: ما المجال المهني الذي تريده؟ مثلاً تطوير الويب، الحوسبة السحابية، البيانات والذكاء الاصطناعي، أو التصميم.",
+      targetRole: "السؤال 4 من 8: ما المسمى الوظيفي المستهدف؟",
+      experienceLevel: "السؤال 5 من 8: ما مستوى خبرتك؟ مبتدئ أم متوسط أم محوّل مسار.",
+      workStyle: "السؤال 6 من 8: ما نمط العمل المفضل؟ عن بُعد، هجين، حضوري، أم تدريب.",
+      skills: "السؤال 7 من 8: ما المهارات التي تريد تطويرها؟ مثلاً React و TypeScript و Python.",
+      goalStatement: "السؤال 8 من 8: ما هو هدفك المهني الشخصي؟",
+      confirmSubmit: "اكتملت الأسئلة. قل 'إرسال' أو 'submit' للدخول إلى لوحة التحكم.",
+    },
+    generalWelcome: (name, targetRole) =>
+      `نظرة عامة: أهلاً ${name}. تم تسجيل دخولك إلى AccessPath. خطتك المهنية تستهدف ${targetRole}.`,
+    majorOptionsPrompt:
+      "الخيارات الرئيسية: 1. المساعد البصري، 2. الدورات، 3. الموارد، 4. التقدم، 5. الوظائف، 6. المتابعة، 7. LinkedIn، 8. مساعد AI، 9. الإعدادات. ماذا تريد أن تفتح؟",
+    listeningForChoice: "أستمع لاختيارك...",
+    specificPromptSuffix:
+      "قل 'major options' لسماع الأقسام الرئيسية، أو 'enroll 1' أو 'complete lesson'.",
+  },
+  fr: {
+    step2BlindIntroAndPrompt:
+      "L'assistant vocal en français est maintenant actif. Dites 'continuer' ou 'continue' pour passer au formulaire de connexion et plan de carrière.",
+    step3StartNotice:
+      "Formulaire guidé par la voix démarré. Je vais poser chaque question, écouter votre réponse et la saisir automatiquement.",
+    listeningLabel: "Écoute de votre voix...",
+    transcribingLabel: "Traitement de votre réponse...",
+    speakingLabel: "Lecture de la question...",
+    doneSpeakingBtn: "J'ai fini de parler",
+    answerByVoiceBtn: "Écouter maintenant",
+    repeatBtn: "Répéter",
+    skipBtn: "Passer / Suivant",
+    pauseVoiceBtn: "Mettre en pause",
+    resumeVoiceBtn: "Démarrer Q&R vocal",
+    voiceReplyPlaceholder: "Ou tapez votre réponse ici si le micro est indisponible...",
+    sendVoiceFallbackBtn: "Remplir",
+    didNotHearPrompt: "Je n'ai pas entendu clairement. Appuyez sur Écouter maintenant ou écrivez ci-dessous.",
+    questions: {
+      name: "Question 1 sur 8 : Quel est votre nom complet ? Parlez maintenant.",
+      email: "Question 2 sur 8 : Quelle est votre adresse e-mail ?",
+      targetTrack:
+        "Question 3 sur 8 : Quel domaine professionnel visez-vous ? Web, Cloud, Data & IA, UI/UX ou Mobile.",
+      targetRole: "Question 4 sur 8 : Quel poste ciblez-vous ?",
+      experienceLevel: "Question 5 sur 8 : Quel est votre niveau d'expérience ? Débutant, Intermédiaire ou Reconversion.",
+      workStyle: "Question 6 sur 8 : Quel mode de travail préférez-vous ? Télétravail, Hybride, Sur site ou Stage.",
+      skills: "Question 7 sur 8 : Quelles compétences souhaitez-vous développer ?",
+      goalStatement: "Question 8 sur 8 : Quel est votre objectif professionnel en une phrase ?",
+      confirmSubmit: "Toutes les questions sont prêtes. Dites 'envoyer' ou 'submit' pour ouvrir votre tableau de bord.",
+    },
+    generalWelcome: (name, targetRole) =>
+      `Aperçu général : Bienvenue ${name}. Vous êtes connecté à AccessPath. Votre plan vise ${targetRole}.`,
+    majorOptionsPrompt:
+      "Options principales : 1. Assistant Visuel, 2. Cours, 3. Ressources, 4. Progrès, 5. Emplois, 6. Suivi, 7. LinkedIn, 8. Assistant IA, 9. Paramètres. Que souhaitez-vous ouvrir ?",
+    listeningForChoice: "À l'écoute de votre choix...",
+    specificPromptSuffix:
+      "Dites 'major options' pour réentendre les sections, ou 'enroll 1' ou 'complete lesson'.",
+  },
+  sw: {
+    step2BlindIntroAndPrompt:
+      "Msaidizi wa sauti kwa Kiswahili amewashwa sasa. Sema 'endelea' au 'continue' kwenda kwenye fomu ya kuingia na mpango wa kazi.",
+    step3StartNotice:
+      "Fomu ya sauti imeanza. Nitauliza kila swali, nisikilize jibu lako, kisha nijaze sehemu husika.",
+    listeningLabel: "Inasikiliza sauti yako...",
+    transcribingLabel: "Inachakata jibu lako...",
+    speakingLabel: "Inasoma swali...",
+    doneSpeakingBtn: "Nimemaliza Kuzungumza",
+    answerByVoiceBtn: "Sikiliza Sasa",
+    repeatBtn: "Rudia",
+    skipBtn: "Ruka / Linalofuata",
+    pauseVoiceBtn: "Simamisha Maswali ya Sauti",
+    resumeVoiceBtn: "Anza Maswali ya Sauti",
+    voiceReplyPlaceholder: "Au andika jibu lako hapa kama hakuna maikrofoni...",
+    sendVoiceFallbackBtn: "Jaza Jibu",
+    didNotHearPrompt: "Sikusikia sauti vizuri. Bonyeza Sikiliza Sasa au andika hapa chini.",
+    questions: {
+      name: "Swali la 1 kati ya 8: Jina lako kamili ni nani? Tafadhali sema sasa.",
+      email: "Swali la 2 kati ya 8: Barua pepe yako ni ipi?",
+      targetTrack:
+        "Swali la 3 kati ya 8: Unapendelea uwanja gani wa kazi? Web, Cloud, Data & AI, UI/UX au Mobile.",
+      targetRole: "Swali la 4 kati ya 8: Unalenga nafasi gani ya kazi?",
+      experienceLevel: "Swali la 5 kati ya 8: Kiwango chako cha uzoefu ni kipi? Beginner, Entry-Level au Intermediate.",
+      workStyle: "Swali la 6 kati ya 8: Unapendelea mtindo upi wa kazi? Remote, Hybrid, On-site au Internship.",
+      skills: "Swali la 7 kati ya 8: Unataka kujenga ujuzi gani?",
+      goalStatement: "Swali la 8 kati ya 8: Lengo lako la kazi ni lipi kwa sentensi fupi?",
+      confirmSubmit: "Maswali yote yamekamilika. Sema 'submit' au 'ingia' kufungua dashibodi.",
+    },
+    generalWelcome: (name, targetRole) =>
+      `Muhtasari wa jumla: Karibu ${name}. Umeingia AccessPath. Mpango wako wa kazi unalenga ${targetRole}.`,
+    majorOptionsPrompt:
+      "Chaguo kuu: 1. Msaidizi wa Kuona, 2. Kozi, 3. Rasilimali, 4. Maendeleo, 5. Kazi, 6. Ufuatiliaji, 7. LinkedIn, 8. Msaidizi AI, 9. Mipangilio. Ungependa kufungua lipi?",
+    listeningForChoice: "Nasikiliza chaguo lako...",
+    specificPromptSuffix:
+      "Sema 'major options' kusikia sehemu kuu tena, au sema 'enroll 1' au 'complete lesson'.",
+  },
 };

@@ -10,6 +10,7 @@ import {
 } from "../types";
 import { RankedCourse, RankedJob } from "../data/catalog";
 import { VOICE_SCRIPTS } from "../i18n/voiceScripts";
+import { apiUrl } from "../services/apiConfig";
 import {
   finishCurrentListeningNow,
   interpretNavigationVoiceCommand,
@@ -143,6 +144,9 @@ export const VoiceNavigatorBar: React.FC<VoiceNavigatorBarProps> = ({
       }
       if (target === "assistant") {
         return `AI Career Assistant view. Ask any career, course, or skill-gap question aloud now.`;
+      }
+      if (target === "vision") {
+        return `Multilingual AI Visual Assistant view for blind and visually impaired users. Press Start Assistant to turn on your rear camera and microphone for live scene, text, door, color, and hazard guidance.`;
       }
       if (target === "settings") {
         return `Settings view. Language is ${preferences.language}, text scale is ${Math.round(
@@ -287,7 +291,7 @@ export const VoiceNavigatorBar: React.FC<VoiceNavigatorBarProps> = ({
       if (intent.action === "ask_ai") {
         const query = intent.queryText || clean;
         try {
-          const res = await fetch("/api/assistant", {
+          const res = await fetch(apiUrl("/api/assistant"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

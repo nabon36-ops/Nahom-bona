@@ -1,8 +1,25 @@
 import { AppView, LanguageCode } from "../types";
+import { apiUrl } from "./apiConfig";
 
 export interface VoicePlaybackResult {
   provider: string;
   voiceId?: string;
+  missingNativeVoice?: boolean;
+  limitationNotice?: string;
+}
+
+export interface LanguageSpeechSupport {
+  language: LanguageCode;
+  browserVoicesFound: string[];
+  hasBrowserTts: boolean;
+  hasBrowserStt: boolean;
+  hasServerTts: boolean;
+  hasServerStt: boolean;
+  hasLiveApi: boolean;
+  synthesisStatus: "cloud-and-device" | "cloud-only" | "device-only" | "unavailable";
+  recognitionStatus: "cloud-and-browser" | "cloud-only" | "browser-only" | "unavailable";
+  limitationNotice: string;
+  fallbackNotice: string;
 }
 
 export interface VoiceListenResult {
@@ -68,25 +85,200 @@ export function finishCurrentListeningNow() {
   }
 }
 
-function speakWithBrowserFallback(text: string, language: LanguageCode): Promise<void> {
+export const LOCALE_MAP: Record<LanguageCode, string> = {
+  en: "en-US",
+  am: "am-ET",
+  om: "om-ET",
+  ar: "ar-SA",
+  fr: "fr-FR",
+  sw: "sw-KE",
+  so: "so-SO",
+  ti: "ti-ET",
+};
+
+export function playAccessibleAudioCue(
+  cue: "start" | "capture" | "stop" | "hazard" | "language"
+) {
+  if (typeof window === "undefined") return;
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+    const freqMap: Record<typeof cue, [number, number]> = {
+      start: [520, 680],
+      capture: [640, 820],
+      stop: [440, 310],
+      hazard: [780, 580],
+      language: [560, 720],
+    };
+    const [f1, f2] = freqMap[cue];
+    osc.type = cue === "hazard" ? "triangle" : "sine";
+    osc.frequency.setValueAtTime(f1, now);
+    osc.frequency.exponentialRampToValueAtTime(f2, now + 0.11);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+    osc.start(now);
+    osc.stop(now + 0.17);
+    window.setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 220);
+  } catch {
+    // Ignore audio context restrictions
+  }
+}
+
+async function getLoadedVoices(): Promise<SpeechSynthesisVoice[]> {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return [];
+  const immediate = window.speechSynthesis.getVoices();
+  if (immediate.length > 0) return immediate;
   return new Promise((resolve) => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      resolve();
-      return;
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve(window.speechSynthesis.getVoices());
+    };
+    window.speechSynthesis.onvoiceschanged = done;
+    window.setTimeout(done, 450);
+  });
+}
+
+export async function inspectLanguageSpeechSupport(
+  language: LanguageCode
+): Promise<LanguageSpeechSupport> {
+  const voices = await getLoadedVoices();
+  const baseCode = language.toLowerCase();
+  const matching = voices.filter((v) => {
+    const vl = (v.lang || "").toLowerCase();
+    return vl === baseCode || vl.startsWith(`${baseCode}-`) || vl.startsWith(`${baseCode}_`);
+  });
+
+  const hasSpeechRec =
+    typeof window !== "undefined" &&
+    Boolean(
+      (window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition ||
+        (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition
+    );
+
+  let hasGemini = false;
+  let hasAddisAI = false;
+  let supportsLiveWebSocket = false;
+  try {
+    const res = await fetch(apiUrl("/api/health"));
+    if (res.ok) {
+      const h = (await res.json()) as {
+        hasGemini?: boolean;
+        hasAddisAI?: boolean;
+        supportsLiveWebSocket?: boolean;
+      };
+      hasGemini = Boolean(h.hasGemini);
+      hasAddisAI = Boolean(h.hasAddisAI);
+      supportsLiveWebSocket = Boolean(h.supportsLiveWebSocket);
     }
+  } catch {
+    // Server check failed; report honestly
+  }
+
+  const hasBrowserTts = matching.length > 0;
+  const hasServerTts =
+    hasGemini || (hasAddisAI && (language === "am" || language === "om" || language === "ti"));
+  const hasServerStt = hasGemini;
+
+  let synthesisStatus: LanguageSpeechSupport["synthesisStatus"] = "unavailable";
+  if (hasServerTts && hasBrowserTts) synthesisStatus = "cloud-and-device";
+  else if (hasServerTts) synthesisStatus = "cloud-only";
+  else if (hasBrowserTts) synthesisStatus = "device-only";
+
+  // Web Speech API rarely supports Afaan Oromo/Tigrinya/Somali natively across browsers
+  const browserSttReliable = hasSpeechRec && ["en", "ar", "fr", "sw", "am"].includes(language);
+  let recognitionStatus: LanguageSpeechSupport["recognitionStatus"] = "unavailable";
+  if (hasServerStt && browserSttReliable) recognitionStatus = "cloud-and-browser";
+  else if (hasServerStt) recognitionStatus = "cloud-only";
+  else if (browserSttReliable) recognitionStatus = "browser-only";
+
+  let limitationNotice = "";
+  let fallbackNotice = "";
+
+  if (!hasBrowserTts && !hasServerTts) {
+    limitationNotice = `No native browser voice or cloud TTS voice is available for this language (${language}) on this device right now.`;
+    fallbackNotice =
+      "Responses will not be silently switched to another language voice. Full descriptions are shown in accessible text & screen-reader live regions, and you can connect Gemini or Addis AI keys on the backend for spoken output.";
+  } else if (!hasBrowserTts && hasServerTts) {
+    limitationNotice = `This browser has no built-in offline voice for (${language}); spoken audio relies on the backend AI voice service.`;
+    fallbackNotice =
+      "If backend TTS is temporarily unreachable, the assistant displays clear text rather than mispronouncing in another language.";
+  }
+
+  if (!hasServerStt && !browserSttReliable) {
+    const recNote = `Browser speech recognition may not recognize (${language}) on this device without backend Gemini transcription.`;
+    limitationNotice = limitationNotice ? `${limitationNotice} ${recNote}` : recNote;
+    fallbackNotice =
+      fallbackNotice || "Use the accessible text input or Quick Command buttons as an immediate fallback.";
+  }
+
+  return {
+    language,
+    browserVoicesFound: matching.map((v) => `${v.name} (${v.lang})`),
+    hasBrowserTts,
+    hasBrowserStt: browserSttReliable,
+    hasServerTts,
+    hasServerStt,
+    hasLiveApi: supportsLiveWebSocket,
+    synthesisStatus,
+    recognitionStatus,
+    limitationNotice,
+    fallbackNotice,
+  };
+}
+
+async function speakWithBrowserFallback(
+  text: string,
+  language: LanguageCode,
+  rate = 0.96,
+  allowCrossLanguageFallback = false
+): Promise<{ spoken: boolean; missingNativeVoice: boolean; voiceName?: string }> {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return { spoken: false, missingNativeVoice: true };
+  }
+
+  const voices = await getLoadedVoices();
+  const baseCode = language.toLowerCase();
+  const matchingVoice = voices.find((v) => {
+    const vl = (v.lang || "").toLowerCase();
+    return vl === baseCode || vl.startsWith(`${baseCode}-`) || vl.startsWith(`${baseCode}_`);
+  });
+
+  // Strict rule: Never silently switch to another language if requested voice is unavailable
+  if (!matchingVoice && !allowCrossLanguageFallback && language !== "en") {
+    return { spoken: false, missingNativeVoice: true };
+  }
+
+  return new Promise((resolve) => {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    const langMap: Record<LanguageCode, string> = {
-      en: "en-US",
-      am: "am-ET",
-      om: "om-ET",
-      so: "so-SO",
-      ti: "ti-ET",
-    };
-    utterance.lang = langMap[language] || "en-US";
-    utterance.rate = 0.96;
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
+    if (matchingVoice) {
+      utterance.voice = matchingVoice;
+      utterance.lang = matchingVoice.lang;
+    } else {
+      utterance.lang = LOCALE_MAP[language] || "en-US";
+    }
+    utterance.rate = Math.max(0.65, Math.min(1.25, rate));
+    utterance.onend = () =>
+      resolve({
+        spoken: true,
+        missingNativeVoice: !matchingVoice,
+        voiceName: matchingVoice?.name,
+      });
+    utterance.onerror = () =>
+      resolve({ spoken: false, missingNativeVoice: !matchingVoice });
     window.speechSynthesis.speak(utterance);
   });
 }
@@ -105,7 +297,7 @@ export async function translateTextToChosenLanguage(
   if (cached) return cached;
 
   try {
-    const res = await fetch("/api/translate", {
+    const res = await fetch(apiUrl("/api/translate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: clean, language }),
@@ -130,10 +322,16 @@ export async function speakEthiopianInstruction(
     provider?: string;
     caption: string;
   }) => void,
-  options?: { autoTranslate?: boolean; textOnly?: boolean }
+  options?: {
+    autoTranslate?: boolean;
+    textOnly?: boolean;
+    rate?: number;
+    allowCrossLanguageFallback?: boolean;
+  }
 ): Promise<VoicePlaybackResult> {
   const autoTranslate = options?.autoTranslate !== false;
   const textOnly = Boolean(options?.textOnly);
+  const rate = options?.rate ?? 0.96;
 
   stopAllVoicePlayback();
 
@@ -154,7 +352,7 @@ export async function speakEthiopianInstruction(
   onStatusChange?.({ playing: true, provider: "connecting", caption: displayText });
 
   try {
-    const response = await fetch("/api/tts", {
+    const response = await fetch(apiUrl("/api/tts"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: displayText, language }),
@@ -171,6 +369,7 @@ export async function speakEthiopianInstruction(
 
       if (data.audioBase64 && data.mimeType) {
         const audio = new Audio(`data:${data.mimeType};base64,${data.audioBase64}`);
+        audio.playbackRate = Math.max(0.7, Math.min(1.25, rate));
         activeAudio = audio;
         onStatusChange?.({
           playing: true,
@@ -181,10 +380,7 @@ export async function speakEthiopianInstruction(
         await new Promise<void>((resolve) => {
           audio.onended = () => resolve();
           audio.onerror = () => resolve();
-          audio.play().catch(async () => {
-            await speakWithBrowserFallback(displayText, language);
-            resolve();
-          });
+          audio.play().catch(() => resolve());
         });
 
         activeAudio = null;
@@ -197,7 +393,7 @@ export async function speakEthiopianInstruction(
       }
     }
   } catch {
-    // Fallback cleanly to browser speech synthesis below
+    // Check browser voice availability below without silent wrong-language switch
   }
 
   onStatusChange?.({
@@ -205,14 +401,32 @@ export async function speakEthiopianInstruction(
     provider: "web-speech",
     caption: displayText,
   });
-  await speakWithBrowserFallback(displayText, language);
+
+  const browserRes = await speakWithBrowserFallback(
+    displayText,
+    language,
+    rate,
+    Boolean(options?.allowCrossLanguageFallback)
+  );
+
   onStatusChange?.({
     playing: false,
-    provider: "web-speech",
+    provider: browserRes.spoken ? "web-speech" : "voice-unavailable",
     caption: displayText,
   });
 
-  return { provider: "web-speech" };
+  if (!browserRes.spoken && browserRes.missingNativeVoice) {
+    return {
+      provider: "voice-unavailable",
+      missingNativeVoice: true,
+      limitationNotice: `No ${language.toUpperCase()} speech synthesis voice is installed on this browser and cloud TTS is unavailable. Text is shown below without switching to another language.`,
+    };
+  }
+
+  return {
+    provider: "web-speech",
+    voiceId: browserRes.voiceName,
+  };
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -264,17 +478,9 @@ function tryBrowserSpeechRecognition(
       abort: () => void;
     };
 
-    const langMap: Record<LanguageCode, string> = {
-      en: "en-US",
-      am: "am-ET",
-      om: "om-ET",
-      so: "so-SO",
-      ti: "ti-ET",
-    };
-
     let finished = false;
     let captured = "";
-    recognition.lang = langMap[language] || "en-US";
+    recognition.lang = LOCALE_MAP[language] || "en-US";
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     recognition.continuous = false;
@@ -528,7 +734,7 @@ export async function listenForUserSpeech(options: {
   onStateChange?.("transcribing");
   try {
     const base64 = await blobToBase64(audioBlob);
-    const res = await fetch("/api/stt", {
+    const res = await fetch(apiUrl("/api/stt"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -683,7 +889,7 @@ export async function interpretOnboardingVoiceAnswer(params: {
 }): Promise<OnboardingFieldIntent> {
   const { transcript, language, fieldContext } = params;
   try {
-    const res = await fetch("/api/voice-intent", {
+    const res = await fetch(apiUrl("/api/voice-intent"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -803,6 +1009,7 @@ export function localParseNavigationCommand(transcript: string): VoiceNavIntent 
   }
 
   const viewMap: Array<{ view: AppView; pattern: RegExp }> = [
+    { view: "vision", pattern: /\b(vision|camera|visual assistant|see|surroundings|ብራእይ|ካሜራ|بصري|كاميرا|caméra|kamera)\b/ },
     { view: "courses", pattern: /\b(course|courses|1|one|first|koorsii|koorsooyin|ኮርስ)\b/ },
     { view: "resources", pattern: /\b(resource|resources|guides|materials|2|two|second|መርጃ)\b/ },
     { view: "progress", pattern: /\b(progress|badge|badges|3|three|third|እድገት)\b/ },
@@ -843,7 +1050,7 @@ export async function interpretNavigationVoiceCommand(params: {
 }): Promise<VoiceNavIntent> {
   const { transcript, language, currentView, contextSummary } = params;
   try {
-    const res = await fetch("/api/voice-intent", {
+    const res = await fetch(apiUrl("/api/voice-intent"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -891,7 +1098,7 @@ export async function interpretStep2VoiceCommand(
   }
 
   try {
-    const res = await fetch("/api/voice-intent", {
+    const res = await fetch(apiUrl("/api/voice-intent"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -912,4 +1119,164 @@ export async function interpretStep2VoiceCommand(
     // Ignore
   }
   return "stay";
+}
+
+export type VisionVoiceCommandType =
+  | "describe_front"
+  | "read_text"
+  | "describe_room"
+  | "find_door"
+  | "what_color"
+  | "repeat"
+  | "speak_slower"
+  | "speak_faster"
+  | "stop_speaking"
+  | "change_language"
+  | "visual_question";
+
+export interface VisionCommandResult {
+  command: VisionVoiceCommandType;
+  targetLanguage: LanguageCode | "";
+  cleanedQuestion: string;
+  spokenAck: string;
+}
+
+export function localParseVisionCommand(transcript: string): VisionCommandResult {
+  const lower = transcript.toLowerCase().trim();
+
+  if (/\b(stop speaking|stop talking|quiet|silence|mute|stop|توقف|arrête|stopp|simama|አቁም|dhaabi)\b/.test(lower)) {
+    return {
+      command: "stop_speaking",
+      targetLanguage: "",
+      cleanedQuestion: "",
+      spokenAck: "Stopped speaking.",
+    };
+  }
+  if (/\b(speak slower|slower|slow down|slow|أبطأ|plus lentement|polepole|ቀስ በል)\b/.test(lower)) {
+    return {
+      command: "speak_slower",
+      targetLanguage: "",
+      cleanedQuestion: "",
+      spokenAck: "Speaking slower now.",
+    };
+  }
+  if (/\b(speak faster|faster|normal speed|أسرع|plus vite|haraka)\b/.test(lower)) {
+    return {
+      command: "speak_faster",
+      targetLanguage: "",
+      cleanedQuestion: "",
+      spokenAck: "Returned to normal speech speed.",
+    };
+  }
+  if (/\b(repeat|say again|repeat that|أعد|répète|rudia|ድገም|irra deebi)\b/.test(lower)) {
+    return {
+      command: "repeat",
+      targetLanguage: "",
+      cleanedQuestion: "",
+      spokenAck: "",
+    };
+  }
+  if (/\b(change language|switch language|language|تغيير اللغة|changer de langue|badili lugha|ቋንቋ)\b/.test(lower)) {
+    let targetLanguage: LanguageCode | "" = "";
+    if (/\b(english|انجليزي|anglais|kiingereza)\b/.test(lower)) targetLanguage = "en";
+    else if (/\b(amharic|አማርኛ|أمهرية|amharique)\b/.test(lower)) targetLanguage = "am";
+    else if (/\b(oromo|afaan oromo|أورومو)\b/.test(lower)) targetLanguage = "om";
+    else if (/\b(arabic|العربية|عربي|arabe)\b/.test(lower)) targetLanguage = "ar";
+    else if (/\b(french|français|الفرنسية|kifaransa)\b/.test(lower)) targetLanguage = "fr";
+    else if (/\b(swahili|kiswahili|السواحيلية)\b/.test(lower)) targetLanguage = "sw";
+    return {
+      command: "change_language",
+      targetLanguage,
+      cleanedQuestion: "",
+      spokenAck: targetLanguage
+        ? `Changing language to ${targetLanguage}.`
+        : "Choose your preferred language from the language selector.",
+    };
+  }
+  if (/\b(read|text|document|sign|ocr|label|اقرأ|نص|lire|texte|soma|maandishi|አንብብ|dubbisi)\b/.test(lower)) {
+    return {
+      command: "read_text",
+      targetLanguage: "",
+      cleanedQuestion: transcript,
+      spokenAck: "",
+    };
+  }
+  if (/\b(door|exit|stairs|stairway|way out|باب|درج|porte|escalier|mlango|ngazi|በር|balbala)\b/.test(lower)) {
+    return {
+      command: "find_door",
+      targetLanguage: "",
+      cleanedQuestion: transcript,
+      spokenAck: "",
+    };
+  }
+  if (/\b(color|colour|لون|couleur|rangi|ቀለም|halluu)\b/.test(lower)) {
+    return {
+      command: "what_color",
+      targetLanguage: "",
+      cleanedQuestion: transcript,
+      spokenAck: "",
+    };
+  }
+  if (/\b(room|around|surroundings|furniture|غرفة|pièce|chambre|chumba|ክፍል|kutaa)\b/.test(lower)) {
+    return {
+      command: "describe_room",
+      targetLanguage: "",
+      cleanedQuestion: transcript,
+      spokenAck: "",
+    };
+  }
+  if (/\b(in front|ahead|what is this|what do you see|أمامي|devant|mbele|ፊት)\b/.test(lower)) {
+    return {
+      command: "describe_front",
+      targetLanguage: "",
+      cleanedQuestion: transcript,
+      spokenAck: "",
+    };
+  }
+  return {
+    command: "visual_question",
+    targetLanguage: "",
+    cleanedQuestion: transcript.trim(),
+    spokenAck: "",
+  };
+}
+
+export async function interpretVisionVoiceCommand(
+  transcript: string,
+  language: LanguageCode
+): Promise<VisionCommandResult> {
+  const local = localParseVisionCommand(transcript);
+  // Fast local match for crisp explicit control commands
+  if (
+    local.command === "stop_speaking" ||
+    local.command === "repeat" ||
+    local.command === "speak_slower" ||
+    local.command === "speak_faster"
+  ) {
+    return local;
+  }
+
+  try {
+    const res = await fetch(apiUrl("/api/vision/command"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript, language }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as Partial<VisionCommandResult> & {
+        fallbackToLocal?: boolean;
+      };
+      if (!data.fallbackToLocal && data.command) {
+        return {
+          command: data.command,
+          targetLanguage: (data.targetLanguage as LanguageCode | "") || "",
+          cleanedQuestion: data.cleanedQuestion || transcript,
+          spokenAck: data.spokenAck || "",
+        };
+      }
+    }
+  } catch {
+    // Fall back cleanly to local parser
+  }
+  return local;
 }

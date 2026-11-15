@@ -44,6 +44,7 @@ import {
   AssistantView,
   SettingsView,
 } from "./components/AssistantAndSettingsViews";
+import { BlindVisualAssistantView } from "./components/BlindVisualAssistantView";
 import { CareerPlanModal } from "./components/CareerPlanModal";
 import {
   Sun,
@@ -51,6 +52,7 @@ import {
   Volume2,
   Square,
   CheckCircle2,
+  Eye,
   Globe,
   Mic,
   BookOpenText,
@@ -71,6 +73,7 @@ const DEFAULT_PREFERENCES: AccessibilityPreferences = {
   signLanguageSystem: "EthSL",
   signDockOpen: false,
   screenReaderVerbosity: "standard",
+  speechRate: 0.95,
 };
 
 const DEFAULT_USER: UserProfile = {
@@ -251,14 +254,19 @@ export default function App() {
   const triggerVoice = useCallback(
     (text: string, langOverride?: LanguageCode): Promise<VoicePlaybackResult> => {
       const targetLang = langOverride || preferences.language;
-      return speakEthiopianInstruction(text, targetLang, (status) => {
-        setVoiceStatus(status);
-      });
+      return speakEthiopianInstruction(
+        text,
+        targetLang,
+        (status) => {
+          setVoiceStatus(status);
+        },
+        { rate: preferences.speechRate ?? 0.95 }
+      );
     },
-    [preferences.language]
+    [preferences.language, preferences.speechRate]
   );
 
-  // Keyboard shortcuts: Alt+R to read page guidance, Alt+V to start Voice Navigator
+  // Keyboard shortcuts: Alt+R to read page guidance, Alt+V to start Voice Navigator, Alt+A to open Visual Assistant
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.altKey && e.key.toLowerCase() === "r") {
@@ -270,6 +278,9 @@ export default function App() {
         e.preventDefault();
         setVoiceNavigatorOpen(true);
         setVoiceAutoStartSignal((s) => s + 1);
+      } else if (e.altKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setView("vision");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -393,6 +404,8 @@ export default function App() {
         return `LinkedIn Profile Builder for ${user.careerPlan.targetRole} highlighting skills: ${user.careerPlan.skills.join(", ")}.`;
       case "assistant":
         return `Multilingual AI Career Assistant ready to answer learning and career questions for ${user.careerPlan.targetRole}.`;
+      case "vision":
+        return `Multilingual AI Visual Assistant for blind and visually impaired users with live camera description, text reading, hazard notices, and voice conversation.`;
       case "settings":
         return `Accessibility & Language Settings: current language ${preferences.language}, sign system ${preferences.signLanguageSystem}, captions ${preferences.captionsEnabled ? "on" : "off"}.`;
       default:
@@ -649,6 +662,7 @@ export default function App() {
     if (result.actionType === "navigate" && result.actionTarget) {
       const validViews: AppView[] = [
         "dashboard",
+        "vision",
         "courses",
         "resources",
         "progress",
@@ -725,6 +739,15 @@ export default function App() {
               setAiCommunicatorOpen(true);
             }
           }}
+          onOpenVisualAssistant={() => {
+            setUser((u) => ({
+              ...u,
+              signedIn: true,
+              name: u.name || "Learner",
+              email: u.email || "learner@accesspath.org",
+            }));
+            setView("vision");
+          }}
         />
         {/* Sign Language Assistant ONLY in bottom-right corner */}
         <SignLanguageDock
@@ -746,6 +769,7 @@ export default function App() {
 
   const navItems: Array<{ id: AppView; label: string }> = [
     { id: "dashboard", label: t.nav.dashboard },
+    { id: "vision", label: t.nav.vision },
     { id: "courses", label: t.nav.courses },
     { id: "resources", label: t.nav.resources },
     { id: "progress", label: t.nav.progress },
@@ -879,6 +903,19 @@ export default function App() {
                   <span>Dark Theme</span>
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setView("vision")}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded border ${
+                view === "vision"
+                  ? "border-[#0969DA] bg-[#0969DA] text-white font-semibold"
+                  : "border-[#0969DA]/60 bg-[#0969DA]/10 text-[#0969DA] dark:text-[#58A6FF] font-semibold"
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{t.nav.vision}</span>
             </button>
 
             <button
@@ -1127,6 +1164,15 @@ export default function App() {
             courses={SAVANNAH_DEMO_COURSES}
             jobs={EXAMPLE_JOBS}
             onSpeakText={(txt) => triggerVoice(txt)}
+          />
+        )}
+
+        {view === "vision" && (
+          <BlindVisualAssistantView
+            preferences={preferences}
+            onSelectLanguage={handleSelectLanguage}
+            onUpdateSpeechRate={(rate) => updatePreference("speechRate", rate)}
+            onCaptionUpdate={handleUpdateCaption}
           />
         )}
 

@@ -17,6 +17,7 @@ import {
   finishCurrentListeningNow,
   listenForUserSpeech,
 } from "../services/voiceService";
+import { apiUrl } from "../services/apiConfig";
 import {
   BookOpen,
   Briefcase,
@@ -25,6 +26,7 @@ import {
   CircleDashed,
   Compass,
   Award,
+  Eye,
   Flame,
   Volume2,
   Send,
@@ -166,7 +168,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (!msgText.trim() || quickLoading) return;
     setQuickLoading(true);
     try {
-      const res = await fetch("/api/assistant", {
+      const res = await fetch(apiUrl("/api/assistant"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -791,6 +793,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* RIGHT COLUMN (25%) — STRICTLY NO SIGN LANGUAGE ASSISTANT HERE (only bottom-right dock) */}
         <aside className="space-y-5 min-w-0" aria-label="AI Assistant and Accessibility Tools">
+          {/* Direct Launch: Multilingual AI Visual Assistant for Blind & Low-Vision Users */}
+          <section className="surface-card rounded-lg border-2 border-[#0969DA] dark:border-[#58A6FF] bg-white dark:bg-[#161B22] p-4 space-y-2.5">
+            <div className="flex items-center gap-2">
+              <Eye className="w-4 h-4 text-[#0969DA] dark:text-[#58A6FF] shrink-0" aria-hidden="true" />
+              <h2 className="text-sm font-bold">{t.nav.vision}</h2>
+            </div>
+            <p className="text-xs text-[#656D76] dark:text-[#8B949E] leading-relaxed">
+              Voice-guided rear camera assistance in English, Amharic, Afaan Oromo, Arabic, French, and Swahili.
+            </p>
+            <button
+              type="button"
+              onClick={() => onNavigate("vision")}
+              className="w-full min-h-[44px] px-3 py-2 text-xs font-bold rounded-md bg-[#0969DA] hover:bg-[#0550AE] text-white dark:bg-[#238636] dark:hover:bg-[#2EA043]"
+            >
+              Open {t.nav.vision}
+            </button>
+          </section>
+
           {/* AI Career Assistant Quick Widget */}
           <section className="surface-card rounded-lg border border-[#D0D7DE] dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">

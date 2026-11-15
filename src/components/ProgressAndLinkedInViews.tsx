@@ -7,6 +7,7 @@ import {
   UserProfile,
 } from "../types";
 import { BadgeDefinition, evaluateBadges } from "../data/badges";
+import { apiUrl } from "../services/apiConfig";
 import {
   Award,
   BookOpen,
@@ -425,7 +426,7 @@ export const LinkedInView: React.FC<LinkedInViewProps> = ({
   const generateDraft = async (draftType: "headline" | "bio" | "post") => {
     setLoadingType(draftType);
     try {
-      const res = await fetch("/api/linkedin-draft", {
+      const res = await fetch(apiUrl("/api/linkedin-draft"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

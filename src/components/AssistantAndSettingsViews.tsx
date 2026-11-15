@@ -9,6 +9,7 @@ import {
   UserProfile,
 } from "../types";
 import { LANGUAGES, TRANSLATIONS } from "../i18n/translations";
+import { apiUrl } from "../services/apiConfig";
 import {
   finishCurrentListeningNow,
   listenForUserSpeech,
@@ -43,6 +44,12 @@ const ASSISTANT_GREETINGS: Record<
     `Waxaan diyaar u ahay inaan taageero Qorshahaaga Shaqo (${role} · ${track}). Igu weydii qoraal ama cod Af-Soomaali ah koorsooyinka Savannah iyo xirfadaha aad u baahan tahay.`,
   ti: (role, track) =>
     `መደብ ስራሕካ (${role} · ${track}) ንምድጋፍ ድሉው እየ። ብጽሑፍ ወይ ብድምጺ ብዛዕባ ክእለታትን ኮርሳት ሳቫናን ብትግርኛ ሕተተኒ።`,
+  ar: (role, track) =>
+    `أنا جاهز لدعم خطتك المهنية (${role} · ${track}). اسألني كتابةً أو عبر الميكروفون باللغة العربية لتحليل المهارات أو التوصية بالدورات.`,
+  fr: (role, track) =>
+    `Prêt à soutenir votre plan de carrière (${role} · ${track}). Posez vos questions par texte ou au microphone en français.`,
+  sw: (role, track) =>
+    `Niko tayari kusaidia Mpango wako wa Kazi (${role} · ${track}). Niulize kwa maandishi au sauti kwa Kiswahili.`,
 };
 
 export const AssistantView: React.FC<AssistantViewProps> = ({
@@ -77,7 +84,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch("/api/assistant", {
+      const res = await fetch(apiUrl("/api/assistant"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
