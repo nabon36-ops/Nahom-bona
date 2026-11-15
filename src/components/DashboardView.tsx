@@ -14,6 +14,10 @@ import {
   computeSkillGaps,
 } from "../data/catalog";
 import {
+  finishCurrentListeningNow,
+  listenForUserSpeech,
+} from "../services/voiceService";
+import {
   BookOpen,
   Briefcase,
   CheckCircle2,
@@ -26,6 +30,8 @@ import {
   Send,
   Sparkles,
   SlidersHorizontal,
+  Mic,
+  MicOff,
 } from "lucide-react";
 
 interface DashboardViewProps {
@@ -84,6 +90,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [quickPrompt, setQuickPrompt] = useState("");
   const [quickReply, setQuickReply] = useState("");
   const [quickLoading, setQuickLoading] = useState(false);
+  const [quickMicState, setQuickMicState] = useState<
+    "idle" | "listening" | "transcribing"
+  >("idle");
 
   const streakStats = useMemo(() => {
     const dateSet = new Set(activityDates);
@@ -153,16 +162,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     0
   );
 
-  const handleQuickAsk = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quickPrompt.trim() || quickLoading) return;
+  const sendQuickMessage = async (msgText: string) => {
+    if (!msgText.trim() || quickLoading) return;
     setQuickLoading(true);
     try {
       const res = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: quickPrompt,
+          message: msgText.trim(),
           language: preferences.language,
           disabilityProfiles: preferences.disabilities,
           careerPlan: user.careerPlan,
@@ -186,6 +194,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
     } finally {
       setQuickLoading(false);
+    }
+  };
+
+  const handleQuickAsk = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await sendQuickMessage(quickPrompt);
+  };
+
+  const handleQuickTranscribe = async () => {
+    if (quickMicState === "listening") {
+      finishCurrentListeningNow();
+      return;
+    }
+    const res = await listenForUserSpeech({
+      language: preferences.language,
+      maxDurationMs: 7500,
+      translateToChosenLanguage: true,
+      onStateChange: setQuickMicState,
+    });
+    const text = (res.localizedTranscript || res.transcript || "").trim();
+    if (text) {
+      setQuickPrompt(text);
+      await sendQuickMessage(text);
     }
   };
 
@@ -785,9 +816,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   type="text"
                   value={quickPrompt}
                   onChange={(e) => setQuickPrompt(e.target.value)}
-                  placeholder="Ask about skill gaps or jobs..."
+                  placeholder="Ask or transcribe audio..."
                   className="flex-1 min-w-0 px-3 py-2 text-xs rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#0D1117]"
                 />
+                <button
+                  type="button"
+                  onClick={handleQuickTranscribe}
+                  disabled={quickLoading || quickMicState === "transcribing"}
+                  aria-label="Transcribe microphone audio"
+                  className={`px-2.5 py-2 rounded-md border shrink-0 ${
+                    quickMicState === "listening"
+                      ? "border-[#1A7F37] bg-[#1A7F37] text-white"
+                      : "border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D]"
+                  }`}
+                >
+                  {quickMicState === "listening" ? (
+                    <MicOff className="w-3.5 h-3.5" aria-hidden="true" />
+                  ) : (
+                    <Mic className="w-3.5 h-3.5" aria-hidden="true" />
+                  )}
+                </button>
                 <button
                   type="submit"
                   disabled={quickLoading}

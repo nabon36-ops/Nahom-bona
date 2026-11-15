@@ -7,6 +7,10 @@ import {
 } from "../types";
 import { TRANSLATIONS } from "../i18n/translations";
 import {
+  finishCurrentListeningNow,
+  listenForUserSpeech,
+} from "../services/voiceService";
+import {
   Camera,
   CameraOff,
   Hand,
@@ -14,6 +18,8 @@ import {
   Maximize2,
   Scan,
   CheckCircle2,
+  Mic,
+  MicOff,
 } from "lucide-react";
 
 interface SignLanguageDockProps {
@@ -28,63 +34,182 @@ interface SignLanguageDockProps {
 
 interface QuickSignCommand {
   id: string;
-  label: string;
+  labels: Record<LanguageCode, string>;
   gestureHint: string;
   actionType: SignDetectionResult["actionType"];
   actionTarget: AppView | "";
-  reply: string;
+  replies: Record<LanguageCode, string>;
 }
 
 const QUICK_SIGNS: QuickSignCommand[] = [
   {
     id: "courses",
-    label: "Courses",
+    labels: {
+      en: "Courses",
+      am: "ኮርሶች",
+      om: "Koorsiiwwan",
+      so: "Koorsooyin",
+      ti: "ኮርሳት",
+    },
     gestureHint: "1 finger / Book sign",
     actionType: "navigate",
     actionTarget: "courses",
-    reply: "Opening recommended Savannah courses.",
+    replies: {
+      en: "Opening recommended Savannah courses.",
+      am: "የተመከሩ የሳቫና ኮርሶችን በመክፈት ላይ።",
+      om: "Koorsiiwwan Savannah gorfaman banaa jira.",
+      so: "Waxaa la furayaa koorsooyinka Savannah ee lagu taliyay.",
+      ti: "ዝተመርጹ ናይ ሳቫና ኮርሳት ይኽፈቱ ኣለዉ።",
+    },
   },
   {
     id: "jobs",
-    label: "Jobs",
+    labels: {
+      en: "Jobs",
+      am: "ሥራዎች",
+      om: "Hojiiwwan",
+      so: "Shaqooyin",
+      ti: "ስራሓት",
+    },
     gestureHint: "2 fingers / V-sign",
     actionType: "navigate",
     actionTarget: "jobs",
-    reply: "Opening Career Plan matched jobs.",
+    replies: {
+      en: "Opening Career Plan matched jobs.",
+      am: "ከሥራ ዕቅድዎ ጋር የተጣጣሙ ሥራዎችን በመክፈት ላይ።",
+      om: "Hojiiwwan karoora hojii keetiin walsiman banaa jira.",
+      so: "Waxaa la furayaa shaqooyinka ku habboon qorshahaaga shaqo.",
+      ti: "ምስ መደብ ስራሕካ ዝሰማምዑ ስራሓት ይኽፈቱ ኣለዉ።",
+    },
   },
   {
     id: "tracker",
-    label: "Tracker",
+    labels: {
+      en: "Tracker",
+      am: "መከታተያ",
+      om: "Hordoffii",
+      so: "Raadraac",
+      ti: "መከታተሊ",
+    },
     gestureHint: "3 fingers",
     actionType: "navigate",
     actionTarget: "tracker",
-    reply: "Opening Job Application Tracker.",
+    replies: {
+      en: "Opening Job Application Tracker.",
+      am: "የሥራ ማመልከቻ መከታተያን በመክፈት ላይ።",
+      om: "Hordoffii iyyannoo hojii banaa jira.",
+      so: "Waxaa la furayaa raadraaca codsiyada shaqada.",
+      ti: "መከታተሊ መመልከቲ ስራሕ ይኽፈት ኣሎ።",
+    },
   },
   {
     id: "progress",
-    label: "Progress",
+    labels: {
+      en: "Progress",
+      am: "እድገት",
+      om: "Guddina",
+      so: "Horumar",
+      ti: "ዕብየት",
+    },
     gestureHint: "4 fingers",
     actionType: "navigate",
     actionTarget: "progress",
-    reply: "Opening Learning Progress & Milestones.",
+    replies: {
+      en: "Opening Learning Progress & Badges.",
+      am: "የትምህርት እድገትን እና ባጆችን በመክፈት ላይ።",
+      om: "Guddina barnootaa fi baajiiwwan banaa jira.",
+      so: "Waxaa la furayaa horumarka waxbarashada iyo calaamadaha.",
+      ti: "ዕብየት ትምህርትን ባጃትን ይኽፈት ኣሎ።",
+    },
   },
   {
-    id: "linkedin",
-    label: "LinkedIn",
-    gestureHint: "5 fingers spread",
+    id: "assistant",
+    labels: {
+      en: "AI Chat",
+      am: "AI ረዳት",
+      om: "Gargaaraa AI",
+      so: "Kaaliyaha AI",
+      ti: "AI ሓጋዚ",
+    },
+    gestureHint: "5 fingers / Help sign",
     actionType: "navigate",
-    actionTarget: "linkedin",
-    reply: "Opening LinkedIn Workspace.",
+    actionTarget: "assistant",
+    replies: {
+      en: "Opening AI Career Assistant in your language.",
+      am: "በአማርኛ የሚግባባውን AI የሙያ ረዳት በመክፈት ላይ።",
+      om: "Gargaaraa AI Afaan Oromootiin deebisu banaa jira.",
+      so: "Waxaa la furayaa Kaaliyaha AI ee ku hadla luqaddaada.",
+      ti: "ብቋንቋኻ ዝዛረብ AI ሓጋዚ ይኽፈት ኣሎ።",
+    },
   },
   {
     id: "complete",
-    label: "Finish Lesson",
+    labels: {
+      en: "Finish Lesson",
+      am: "ትምህርት አጠናቅቅ",
+      om: "Barnoota Xumuri",
+      so: "Dhammee Casharka",
+      ti: "ትምህርቲ ዛዝም",
+    },
     gestureHint: "Thumbs up / Confirm",
     actionType: "complete_lesson",
     actionTarget: "",
-    reply: "Completing your next active lesson.",
+    replies: {
+      en: "Completing your next active lesson.",
+      am: "ቀጣዩን ንቁ ትምህርት በማጠናቀቅ ላይ።",
+      om: "Barnoota itti aanu xumuraa jira.",
+      so: "Waxaa la dhammeystirayaa casharkaaga xiga.",
+      ti: "ቀጻሊ ንጡፍ ትምህርቲ ይዛዘም ኣሎ።",
+    },
   },
 ];
+
+const TRANSCRIBE_LABELS: Record<
+  LanguageCode,
+  {
+    btn: string;
+    listening: string;
+    processing: string;
+    heading: string;
+    readyCaption: string;
+  }
+> = {
+  en: {
+    btn: "Transcribe Speech (Mic)",
+    listening: "Done Speaking",
+    processing: "Transcribing...",
+    heading: "Live Speech-to-Text (Chosen Language)",
+    readyCaption: "Ready to read texts in English and detect your sign responses.",
+  },
+  am: {
+    btn: "ንግግር ወደ ጽሑፍ ቀይር",
+    listening: "መቅዳት አቁም",
+    processing: "በመገልበጥ ላይ...",
+    heading: "የንግግር ጽሑፍ ግልባጭ (በአማርኛ)",
+    readyCaption: "ጽሑፎችን በአማርኛ ለማንበብ እና የምልክት ምላሽዎን ለመቀበል ዝግጁ ነኝ።",
+  },
+  om: {
+    btn: "Dubbii Gara Barreeffamaatti",
+    listening: "Waraabbii Dhaabi",
+    processing: "Barreeffama qindeessaa...",
+    heading: "Barreeffama Dubbii Kallattii",
+    readyCaption: "Barreeffama Afaan Oromootiin dubbisuu fi mallattoo keessan hubachuuf qophiidha.",
+  },
+  so: {
+    btn: "Codka u Beddel Qoraal",
+    listening: "Jooji Duubista",
+    processing: "Waa la qorayaa...",
+    heading: "Qoraalka Hadalka Tooska ah",
+    readyCaption: "Diyaar u ah inaan qoraallada ku akhriyo Af-Soomaali oo aan garto calaamadahaaga.",
+  },
+  ti: {
+    btn: "ዘረባ ናብ ጽሑፍ ቀይር",
+    listening: "ምቅዳሕ ደው ኣብል",
+    processing: "ናብ ጽሑፍ ይቅየር ኣሎ...",
+    heading: "ቀጥታዊ ጽሑፍ ዘረባ (ብትግርኛ)",
+    readyCaption: "ጽሑፋት ብትግርኛ ንምንባብን ምልክትኹም ንምርዳእን ድሉው እየ።",
+  },
+};
 
 export const SignLanguageDock: React.FC<SignLanguageDockProps> = ({
   language,
@@ -96,6 +221,7 @@ export const SignLanguageDock: React.FC<SignLanguageDockProps> = ({
   onExecuteSignTask,
 }) => {
   const t = TRANSLATIONS[language];
+  const tl = TRANSCRIBE_LABELS[language];
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -106,6 +232,11 @@ export const SignLanguageDock: React.FC<SignLanguageDockProps> = ({
   const [autoScan, setAutoScan] = useState(false);
   const [lastResult, setLastResult] = useState<SignDetectionResult | null>(null);
   const [signPhase, setSignPhase] = useState(0);
+  const [transcribeState, setTranscribeState] = useState<
+    "idle" | "listening" | "transcribing"
+  >("idle");
+  const [transcribedCaption, setTranscribedCaption] = useState("");
+  const [transcribeError, setTranscribeError] = useState("");
 
   // Subtle interpreter hand motion tick when caption updates
   useEffect(() => {
@@ -205,16 +336,40 @@ export const SignLanguageDock: React.FC<SignLanguageDockProps> = ({
   });
 
   const handleQuickSign = (cmd: QuickSignCommand) => {
+    const label = cmd.labels[language] || cmd.labels.en;
+    const reply = cmd.replies[language] || cmd.replies.en;
     const result: SignDetectionResult = {
-      detectedSign: `${cmd.label} (${cmd.gestureHint})`,
+      detectedSign: `${label} (${cmd.gestureHint})`,
       confidence: 1,
       actionType: cmd.actionType,
       actionTarget: cmd.actionTarget,
-      replyInLanguage: cmd.reply,
+      replyInLanguage: reply,
       provider: "sign-pad",
     };
     setLastResult(result);
     onExecuteSignTask(result);
+  };
+
+  const handleTranscribeMic = async () => {
+    setTranscribeError("");
+    if (transcribeState === "listening") {
+      finishCurrentListeningNow();
+      return;
+    }
+    const res = await listenForUserSpeech({
+      language,
+      maxDurationMs: 8500,
+      translateToChosenLanguage: true,
+      onStateChange: setTranscribeState,
+    });
+    if (res.micError) {
+      setTranscribeError(res.micError);
+      return;
+    }
+    const text = (res.localizedTranscript || res.transcript || "").trim();
+    if (text) {
+      setTranscribedCaption(text);
+    }
   };
 
   // EXCLUSIVELY anchored to the bottom-right corner
@@ -336,11 +491,53 @@ export const SignLanguageDock: React.FC<SignLanguageDockProps> = ({
             <div className="text-[11px] font-semibold text-[#0969DA] dark:text-[#58A6FF]">
               {signLanguageSystem} Visual Gloss
             </div>
-            <p className="text-xs leading-snug line-clamp-3 mt-0.5">
-              {activeCaption ||
-                "Ready to translate voice instructions and detect your sign language responses."}
+            <p className="text-xs leading-snug line-clamp-4 mt-0.5">
+              {activeCaption || tl.readyCaption}
             </p>
           </div>
+        </div>
+
+        {/* Live Microphone Audio Transcription -> Chosen Language Text */}
+        <div className="rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#0D1117] p-2.5 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold text-[#1F2328] dark:text-[#E6EDF3]">
+              {tl.heading}
+            </span>
+            <button
+              type="button"
+              onClick={handleTranscribeMic}
+              disabled={transcribeState === "transcribing"}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded ${
+                transcribeState === "listening"
+                  ? "bg-[#1A7F37] text-white"
+                  : "bg-[#0969DA] text-white"
+              }`}
+            >
+              {transcribeState === "listening" ? (
+                <>
+                  <MicOff className="w-3 h-3" aria-hidden="true" />
+                  <span>{tl.listening}</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-3 h-3" aria-hidden="true" />
+                  <span>
+                    {transcribeState === "transcribing" ? tl.processing : tl.btn}
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
+          {transcribedCaption && (
+            <p className="text-xs leading-relaxed text-[#1F2328] dark:text-[#E6EDF3]">
+              {transcribedCaption}
+            </p>
+          )}
+          {transcribeError && (
+            <p className="text-[11px] text-[#CF222E] dark:text-[#F85149]">
+              {transcribeError}
+            </p>
+          )}
         </div>
 
         {/* Camera Sign Response Detection */}
@@ -442,7 +639,9 @@ export const SignLanguageDock: React.FC<SignLanguageDockProps> = ({
                 onClick={() => handleQuickSign(cmd)}
                 className="text-left px-2.5 py-2 rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D] hover:border-[#0969DA] dark:hover:border-[#58A6FF] transition-colors"
               >
-                <div className="text-xs font-semibold truncate">{cmd.label}</div>
+                <div className="text-xs font-semibold truncate">
+                  {cmd.labels[language] || cmd.labels.en}
+                </div>
                 <div className="text-[10px] text-[#656D76] dark:text-[#8B949E] truncate">
                   {cmd.gestureHint}
                 </div>

@@ -26,9 +26,12 @@ import { evaluateBadges } from "./data/badges";
 import {
   speakEthiopianInstruction,
   stopAllVoicePlayback,
+  VoicePlaybackResult,
 } from "./services/voiceService";
 import { OnboardingFlow } from "./components/OnboardingFlow";
 import { SignLanguageDock } from "./components/SignLanguageDock";
+import { VoiceNavigatorBar } from "./components/VoiceNavigatorBar";
+import { MultilingualAICommunicator } from "./components/MultilingualAICommunicator";
 import { DashboardView } from "./components/DashboardView";
 import { CoursesView } from "./components/CoursesView";
 import { ResourcesView } from "./components/ResourcesView";
@@ -42,7 +45,16 @@ import {
   SettingsView,
 } from "./components/AssistantAndSettingsViews";
 import { CareerPlanModal } from "./components/CareerPlanModal";
-import { Sun, Moon, Volume2, Square, CheckCircle2, Globe } from "lucide-react";
+import {
+  Sun,
+  Moon,
+  Volume2,
+  Square,
+  CheckCircle2,
+  Globe,
+  Mic,
+  BookOpenText,
+} from "lucide-react";
 
 const STORAGE_KEY = "accesspath_state_v1";
 
@@ -152,6 +164,17 @@ export default function App() {
     null
   );
   const [careerModalOpen, setCareerModalOpen] = useState(false);
+  const [voiceNavigatorOpen, setVoiceNavigatorOpen] = useState<boolean>(() =>
+    (savedState?.preferences?.disabilities || []).includes("blind")
+  );
+  const [aiCommunicatorOpen, setAiCommunicatorOpen] = useState<boolean>(() => {
+    const prefs = savedState?.preferences;
+    return Boolean(
+      prefs?.disabilities?.includes("deaf") ||
+        (prefs?.language && prefs.language !== "en")
+    );
+  });
+  const [voiceAutoStartSignal, setVoiceAutoStartSignal] = useState<number>(0);
 
   // Persist user preferences & learning progress
   useEffect(() => {
@@ -226,16 +249,16 @@ export default function App() {
   const t = TRANSLATIONS[preferences.language];
 
   const triggerVoice = useCallback(
-    (text: string, langOverride?: LanguageCode) => {
+    (text: string, langOverride?: LanguageCode): Promise<VoicePlaybackResult> => {
       const targetLang = langOverride || preferences.language;
-      speakEthiopianInstruction(text, targetLang, (status) => {
+      return speakEthiopianInstruction(text, targetLang, (status) => {
         setVoiceStatus(status);
       });
     },
     [preferences.language]
   );
 
-  // Keyboard shortcut Alt+R to read page guidance aloud
+  // Keyboard shortcuts: Alt+R to read page guidance, Alt+V to start Voice Navigator
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.altKey && e.key.toLowerCase() === "r") {
@@ -243,6 +266,10 @@ export default function App() {
         triggerVoice(
           `Current view: ${view}. Target role: ${user.careerPlan.targetRole}.`
         );
+      } else if (e.altKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        setVoiceNavigatorOpen(true);
+        setVoiceAutoStartSignal((s) => s + 1);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -251,6 +278,9 @@ export default function App() {
 
   const handleSelectLanguage = (lang: LanguageCode) => {
     setPreferences((p) => ({ ...p, language: lang }));
+    if (lang !== "en") {
+      setAiCommunicatorOpen(true);
+    }
   };
 
   const handleToggleDisability = (type: DisabilityType) => {
@@ -262,11 +292,20 @@ export default function App() {
         ? ["standard" as DisabilityType]
         : [...prev.disabilities.filter((d) => d !== "standard"), type];
 
+      if (nextDisabilities.includes("blind")) {
+        setVoiceNavigatorOpen(true);
+      }
+      if (nextDisabilities.includes("deaf")) {
+        setAiCommunicatorOpen(true);
+      }
+
       return {
         ...prev,
         disabilities: nextDisabilities,
         captionsEnabled:
           nextDisabilities.includes("deaf") || prev.captionsEnabled,
+        voiceInstructorEnabled:
+          nextDisabilities.includes("blind") || prev.voiceInstructorEnabled,
         signDockOpen: nextDisabilities.includes("deaf")
           ? true
           : prev.signDockOpen,
@@ -313,6 +352,89 @@ export default function App() {
     () => rankJobsByCareerPlan(EXAMPLE_JOBS, user.careerPlan, completedSkills),
     [user.careerPlan, completedSkills]
   );
+
+  const streakDays = useMemo(() => {
+    if (activityDates.length === 0) return 0;
+    const set = new Set(activityDates);
+    let count = 0;
+    const today = getIsoDateOffset(0);
+    let offset = set.has(today) ? 0 : -1;
+    while (set.has(getIsoDateOffset(offset))) {
+      count += 1;
+      offset -= 1;
+    }
+    return count;
+  }, [activityDates]);
+
+  const currentPageSummary = useMemo(() => {
+    const topCourses = rankedCourses
+      .slice(0, 3)
+      .map((r) => `${r.course.title} (${r.matchScore}% match)`)
+      .join(", ");
+    const topJobs = rankedJobs
+      .slice(0, 3)
+      .map((r) => `${r.job.title} at ${r.job.company} (${r.matchScore}% match)`)
+      .join(", ");
+
+    switch (view) {
+      case "dashboard":
+        return `Dashboard for ${user.name || "Learner"}. Career Plan: ${user.careerPlan.targetRole} (${user.careerPlan.targetTrack}). Daily streak: ${streakDays} days. Learning hours: ${learningHours}h / ${weeklyGoalHours}h weekly goal. Top recommended courses: ${topCourses}. Top recommended jobs: ${topJobs}.`;
+      case "courses":
+        return `Courses & ${preferences.signLanguageSystem} Sign Language Basics tutorials. Enrolled in ${enrolledCourseIds.length} courses. Top courses: ${topCourses}.`;
+      case "resources":
+        return `Learning Resources hub with ${bookmarkedCourseIds.length} bookmarked courses, ${bookmarkedGuideIds.length} bookmarked guides, and ${Object.keys(downloadedGuides).length} downloaded study guides.`;
+      case "progress":
+        return `Progress & Achievements: ${learningHours}h logged of ${weeklyGoalHours}h weekly goal, ${Object.keys(earnedBadges).length} badges unlocked, ${applications.length} tracked applications.`;
+      case "jobs":
+        return `Job Recommendations tailored for ${user.careerPlan.targetRole} (${user.careerPlan.workStyle}): ${topJobs}.`;
+      case "tracker":
+        return `Job Application Tracker with ${applications.length} tracked jobs across Saved, Applied, Interviewing, and Offered stages.`;
+      case "linkedin":
+        return `LinkedIn Profile Builder for ${user.careerPlan.targetRole} highlighting skills: ${user.careerPlan.skills.join(", ")}.`;
+      case "assistant":
+        return `Multilingual AI Career Assistant ready to answer learning and career questions for ${user.careerPlan.targetRole}.`;
+      case "settings":
+        return `Accessibility & Language Settings: current language ${preferences.language}, sign system ${preferences.signLanguageSystem}, captions ${preferences.captionsEnabled ? "on" : "off"}.`;
+      default:
+        return `AccessPath workspace view ${view}.`;
+    }
+  }, [
+    applications.length,
+    bookmarkedCourseIds.length,
+    bookmarkedGuideIds.length,
+    downloadedGuides,
+    earnedBadges,
+    enrolledCourseIds.length,
+    learningHours,
+    preferences.captionsEnabled,
+    preferences.language,
+    preferences.signLanguageSystem,
+    rankedCourses,
+    rankedJobs,
+    streakDays,
+    user.careerPlan.skills,
+    user.careerPlan.targetRole,
+    user.careerPlan.targetTrack,
+    user.careerPlan.workStyle,
+    user.name,
+    view,
+    weeklyGoalHours,
+  ]);
+
+  const handleUpdateCaption = useCallback((cap: string) => {
+    setVoiceStatus((prev) => ({ ...prev, caption: cap }));
+  }, []);
+
+  const handleSpeakText = useCallback(
+    (txt: string) => {
+      triggerVoice(txt);
+    },
+    [triggerVoice]
+  );
+
+  const handleHideAiCommunicator = useCallback(() => {
+    setAiCommunicatorOpen(false);
+  }, []);
 
   // Automatically award virtual achievement badges when milestones or job application phases are reached
   useEffect(() => {
@@ -592,6 +714,16 @@ export default function App() {
               careerPlan,
             });
             setView("dashboard");
+            if (preferences.disabilities.includes("blind")) {
+              setVoiceNavigatorOpen(true);
+              setVoiceAutoStartSignal((s) => s + 1);
+            }
+            if (
+              preferences.disabilities.includes("deaf") ||
+              preferences.language !== "en"
+            ) {
+              setAiCommunicatorOpen(true);
+            }
           }}
         />
         {/* Sign Language Assistant ONLY in bottom-right corner */}
@@ -751,6 +883,35 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => {
+                setVoiceNavigatorOpen(true);
+                setVoiceAutoStartSignal((s) => s + 1);
+              }}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded border ${
+                voiceNavigatorOpen
+                  ? "border-[#0969DA] bg-[#0969DA]/10 text-[#0969DA] dark:text-[#58A6FF] font-semibold"
+                  : "border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D]"
+              }`}
+            >
+              <Mic className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Voice Navigator</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAiCommunicatorOpen((open) => !open)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded border ${
+                aiCommunicatorOpen
+                  ? "border-[#0969DA] bg-[#0969DA]/10 text-[#0969DA] dark:text-[#58A6FF] font-semibold"
+                  : "border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D]"
+              }`}
+            >
+              <BookOpenText className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Language Reader</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() =>
                 triggerVoice(
                   t.disabilities[preferences.disabilities[0] || "standard"]
@@ -788,6 +949,47 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Hierarchical Two-Way Voice Navigator (General -> Major Options -> Specific Items) */}
+      <VoiceNavigatorBar
+        enabled={voiceNavigatorOpen}
+        autoStartSignal={voiceAutoStartSignal}
+        preferences={preferences}
+        user={user}
+        currentView={view}
+        rankedCourses={rankedCourses}
+        rankedJobs={rankedJobs}
+        enrolledCourseIds={enrolledCourseIds}
+        bookmarkedCourseIds={bookmarkedCourseIds}
+        courseProgress={courseProgress}
+        applications={applications}
+        learningHours={learningHours}
+        weeklyGoalHours={weeklyGoalHours}
+        earnedBadgesCount={Object.keys(earnedBadges).length}
+        downloadedGuidesCount={Object.keys(downloadedGuides).length}
+        streakDays={streakDays}
+        voiceStatus={voiceStatus}
+        onNavigate={setView}
+        onEnrollCourse={handleEnrollCourse}
+        onCompleteLesson={handleCompleteLesson}
+        onSaveOrApplyJob={handleSaveOrApplyJob}
+        onCheckInToday={handleCheckInToday}
+        onTriggerVoice={triggerVoice}
+        onStopVoice={stopAllVoicePlayback}
+        onToggleEnabled={() => setVoiceNavigatorOpen((v) => !v)}
+      />
+
+      {/* Chosen-Language AI Reader & Transcribe Audio Communicator */}
+      <MultilingualAICommunicator
+        enabled={aiCommunicatorOpen}
+        preferences={preferences}
+        user={user}
+        currentView={view}
+        pageSummary={currentPageSummary}
+        onUpdateCaption={handleUpdateCaption}
+        onSpeakText={handleSpeakText}
+        onHide={handleHideAiCommunicator}
+      />
 
       {/* Milestone Appreciation Notification Banner */}
       {appreciationToast && (

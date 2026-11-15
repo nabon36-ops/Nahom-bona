@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AccessibilityPreferences,
   CareerPlan,
@@ -8,6 +8,15 @@ import {
   UserProfile,
 } from "../types";
 import { LANGUAGES, TRANSLATIONS } from "../i18n/translations";
+import { OnboardingQuestionId, VOICE_SCRIPTS } from "../i18n/voiceScripts";
+import {
+  finishCurrentListeningNow,
+  interpretOnboardingVoiceAnswer,
+  interpretStep2VoiceCommand,
+  listenForUserSpeech,
+  stopActiveListening,
+  VoicePlaybackResult,
+} from "../services/voiceService";
 import { CAREER_TRACKS, TARGET_SKILLS_POOL } from "../data/catalog";
 import {
   Volume2,
@@ -22,6 +31,10 @@ import {
   Compass,
   Sun,
   Moon,
+  Mic,
+  MicOff,
+  RotateCw,
+  SkipForward,
 } from "lucide-react";
 
 interface OnboardingFlowProps {
@@ -32,7 +45,10 @@ interface OnboardingFlowProps {
   onToggleDisability: (type: DisabilityType) => void;
   onToggleColorConfusion: (opt: ColorConfusionOption) => void;
   onToggleTheme: () => void;
-  onTriggerVoice: (text: string, langOverride?: LanguageCode) => void;
+  onTriggerVoice: (
+    text: string,
+    langOverride?: LanguageCode
+  ) => Promise<VoicePlaybackResult>;
   onStopVoice: () => void;
   onCompleteOnboarding: (userInfo: {
     name: string;
@@ -49,6 +65,38 @@ const COLOR_CONFUSION_OPTIONS: Array<{ id: ColorConfusionOption; label: string }
   { id: "most_colors", label: "Difficulty distinguishing many or most colors" },
   { id: "other", label: "Another color combination" },
   { id: "not_sure", label: "Not sure / configure later" },
+];
+
+interface QuestionConfig {
+  id: OnboardingQuestionId;
+  label: string;
+  options?: string[];
+  multi?: boolean;
+}
+
+const STEP3_QUESTIONS: QuestionConfig[] = [
+  { id: "name", label: "Full name" },
+  { id: "email", label: "Email address" },
+  { id: "targetTrack", label: "Target career field", options: CAREER_TRACKS },
+  { id: "targetRole", label: "Target role title" },
+  {
+    id: "experienceLevel",
+    label: "Experience level",
+    options: ["Beginner", "Entry-Level", "Intermediate", "Career Switcher"],
+  },
+  {
+    id: "workStyle",
+    label: "Preferred work style",
+    options: ["Remote", "Hybrid", "On-site", "Internship"],
+  },
+  {
+    id: "skills",
+    label: "Skills you want to build",
+    options: TARGET_SKILLS_POOL,
+    multi: true,
+  },
+  { id: "goalStatement", label: "Personal career goal" },
+  { id: "confirmSubmit", label: "Confirm & Enter Dashboard" },
 ];
 
 export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
@@ -69,15 +117,335 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
   const [careerPlan, setCareerPlan] = useState<CareerPlan>(user.careerPlan);
   const [formError, setFormError] = useState("");
 
-  const t = TRANSLATIONS[preferences.language];
+  // Two-way voice Q&A states
+  const [voiceQaActive, setVoiceQaActive] = useState(false);
+  const [qaIndex, setQaIndex] = useState(0);
+  const [listenState, setListenState] = useState<"idle" | "listening" | "transcribing">("idle");
+  const [lastHeardTranscript, setLastHeardTranscript] = useState("");
+  const [micError, setMicError] = useState("");
+  const [fallbackAnswerInput, setFallbackAnswerInput] = useState("");
 
-  const handleDisabilityClick = (type: DisabilityType) => {
+  const qaRunTokenRef = useRef(0);
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  const nameRef = useRef(name);
+  nameRef.current = name;
+  const emailRef = useRef(email);
+  emailRef.current = email;
+  const careerPlanRef = useRef(careerPlan);
+  careerPlanRef.current = careerPlan;
+
+  const t = TRANSLATIONS[preferences.language];
+  const vs = VOICE_SCRIPTS[preferences.language];
+  const isBlindSelected = preferences.disabilities.includes("blind");
+
+  useEffect(() => {
+    return () => {
+      qaRunTokenRef.current += 1;
+      stopActiveListening();
+      onStopVoice();
+    };
+  }, [onStopVoice]);
+
+  const submitFinalForm = useCallback(() => {
+    qaRunTokenRef.current += 1;
+    stopActiveListening();
+    onStopVoice();
+    onCompleteOnboarding({
+      name: nameRef.current.trim() || "Abebe Bikila",
+      email: emailRef.current.trim() || "learner@accesspath.org",
+      careerPlan: careerPlanRef.current,
+    });
+  }, [onCompleteOnboarding, onStopVoice]);
+
+  const applyExtractedAnswer = useCallback(
+    (q: QuestionConfig, filledValue: string, matchedItems: string[]) => {
+      if (q.id === "name" && filledValue) {
+        setName(filledValue);
+        nameRef.current = filledValue;
+      } else if (q.id === "email" && filledValue) {
+        setEmail(filledValue);
+        emailRef.current = filledValue;
+      } else if (q.id === "targetTrack" && filledValue) {
+        const match = CAREER_TRACKS.find(
+          (tr) => tr.toLowerCase() === filledValue.toLowerCase()
+        ) || CAREER_TRACKS[0];
+        setCareerPlan((p) => ({ ...p, targetTrack: match }));
+      } else if (q.id === "targetRole" && filledValue) {
+        setCareerPlan((p) => ({ ...p, targetRole: filledValue }));
+      } else if (q.id === "experienceLevel" && filledValue) {
+        const valid = ["Beginner", "Entry-Level", "Intermediate", "Career Switcher"];
+        const match = (valid.find(
+          (v) => v.toLowerCase() === filledValue.toLowerCase()
+        ) || "Beginner") as CareerPlan["experienceLevel"];
+        setCareerPlan((p) => ({ ...p, experienceLevel: match }));
+      } else if (q.id === "workStyle" && filledValue) {
+        const valid = ["Remote", "Hybrid", "On-site", "Internship"];
+        const match = (valid.find(
+          (v) => v.toLowerCase() === filledValue.toLowerCase()
+        ) || "Remote") as CareerPlan["workStyle"];
+        setCareerPlan((p) => ({ ...p, workStyle: match }));
+      } else if (q.id === "skills") {
+        const additions = matchedItems.length
+          ? matchedItems
+          : TARGET_SKILLS_POOL.filter((s) =>
+              filledValue.toLowerCase().includes(s.toLowerCase())
+            );
+        if (additions.length > 0) {
+          setCareerPlan((p) => ({
+            ...p,
+            skills: Array.from(new Set([...p.skills, ...additions])),
+          }));
+        }
+      } else if (q.id === "goalStatement" && filledValue) {
+        setCareerPlan((p) => ({ ...p, goalStatement: filledValue }));
+      }
+    },
+    []
+  );
+
+  const runVoiceQuestionAt = useCallback(
+    async (idx: number, token: number) => {
+      if (qaRunTokenRef.current !== token || stepRef.current !== 3) return;
+      const clampedIdx = Math.max(0, Math.min(idx, STEP3_QUESTIONS.length - 1));
+      const q = STEP3_QUESTIONS[clampedIdx];
+      setQaIndex(clampedIdx);
+      setMicError("");
+
+      // 1. Ask the question aloud first
+      await onTriggerVoice(vs.questions[q.id], preferences.language);
+      if (qaRunTokenRef.current !== token || stepRef.current !== 3) return;
+
+      // 2. Listen to the user's spoken response
+      const listenRes = await listenForUserSpeech({
+        language: preferences.language,
+        maxDurationMs: 8000,
+        onStateChange: (st) => {
+          if (qaRunTokenRef.current === token) setListenState(st);
+        },
+      });
+      if (qaRunTokenRef.current !== token || stepRef.current !== 3) return;
+
+      if (listenRes.micError) {
+        setMicError(listenRes.micError);
+      }
+      if (listenRes.cancelled) return;
+
+      const spoken = listenRes.transcript.trim();
+      if (!spoken) {
+        // Speak gentle prompt and wait for user to tap Listen Now or type
+        await onTriggerVoice(vs.didNotHearPrompt, preferences.language);
+        return;
+      }
+
+      setLastHeardTranscript(spoken);
+
+      // 3. Parse answer and fill the exact space on the form
+      if (q.id === "confirmSubmit") {
+        const lower = spoken.toLowerCase();
+        if (/\b(repeat|back|review|no|stay|ድገም)\b/.test(lower)) {
+          runVoiceQuestionAt(0, token);
+          return;
+        }
+        if (
+          /\b(submit|enter|dashboard|yes|ok|done|continue|ግባ|ቀጥል|itti fufi|sii wad)\b/.test(
+            lower
+          )
+        ) {
+          submitFinalForm();
+          return;
+        }
+      }
+
+      const intent = await interpretOnboardingVoiceAnswer({
+        transcript: spoken,
+        language: preferences.language,
+        fieldContext: {
+          fieldId: q.id,
+          label: q.label,
+          options: q.options,
+          multi: q.multi,
+        },
+      });
+      if (qaRunTokenRef.current !== token || stepRef.current !== 3) return;
+
+      if (intent.command === "repeat") {
+        runVoiceQuestionAt(clampedIdx, token);
+        return;
+      }
+      if (intent.command === "back") {
+        runVoiceQuestionAt(Math.max(0, clampedIdx - 1), token);
+        return;
+      }
+      if (intent.command === "submit") {
+        submitFinalForm();
+        return;
+      }
+      if (intent.command === "next") {
+        if (clampedIdx + 1 < STEP3_QUESTIONS.length) {
+          runVoiceQuestionAt(clampedIdx + 1, token);
+        }
+        return;
+      }
+
+      applyExtractedAnswer(q, intent.filledValue, intent.matchedItems);
+      if (intent.confirmationText) {
+        await onTriggerVoice(intent.confirmationText, preferences.language);
+        if (qaRunTokenRef.current !== token || stepRef.current !== 3) return;
+      }
+
+      if (clampedIdx + 1 < STEP3_QUESTIONS.length) {
+        runVoiceQuestionAt(clampedIdx + 1, token);
+      }
+    },
+    [
+      applyExtractedAnswer,
+      onTriggerVoice,
+      preferences.language,
+      submitFinalForm,
+      vs.didNotHearPrompt,
+      vs.questions,
+    ]
+  );
+
+  const startStep3VoiceQa = useCallback(
+    async (startIdx = 0) => {
+      qaRunTokenRef.current += 1;
+      const token = qaRunTokenRef.current;
+      setVoiceQaActive(true);
+      setMicError("");
+      if (startIdx === 0) {
+        await onTriggerVoice(vs.step3StartNotice, preferences.language);
+        if (qaRunTokenRef.current !== token || stepRef.current !== 3) return;
+      }
+      runVoiceQuestionAt(startIdx, token);
+    },
+    [onTriggerVoice, preferences.language, runVoiceQuestionAt, vs.step3StartNotice]
+  );
+
+  const pauseStep3VoiceQa = useCallback(() => {
+    qaRunTokenRef.current += 1;
+    stopActiveListening();
+    onStopVoice();
+    setListenState("idle");
+    setVoiceQaActive(false);
+  }, [onStopVoice]);
+
+  const handleFallbackTextAnswer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const answerText = fallbackAnswerInput.trim();
+    if (!answerText) return;
+    setFallbackAnswerInput("");
+    setLastHeardTranscript(answerText);
+    const q = STEP3_QUESTIONS[qaIndex];
+
+    if (q.id === "confirmSubmit") {
+      if (/\b(submit|enter|yes|ok|done|continue|ግባ)\b/i.test(answerText)) {
+        submitFinalForm();
+      } else {
+        startStep3VoiceQa(0);
+      }
+      return;
+    }
+
+    const intent = await interpretOnboardingVoiceAnswer({
+      transcript: answerText,
+      language: preferences.language,
+      fieldContext: {
+        fieldId: q.id,
+        label: q.label,
+        options: q.options,
+        multi: q.multi,
+      },
+    });
+    if (intent.command === "submit") {
+      submitFinalForm();
+      return;
+    }
+    if (intent.command !== "next" && intent.command !== "back" && intent.command !== "repeat") {
+      applyExtractedAnswer(q, intent.filledValue, intent.matchedItems);
+    }
+    const nextIdx = Math.min(qaIndex + 1, STEP3_QUESTIONS.length - 1);
+    if (voiceQaActive) {
+      qaRunTokenRef.current += 1;
+      runVoiceQuestionAt(nextIdx, qaRunTokenRef.current);
+    } else {
+      setQaIndex(nextIdx);
+    }
+  };
+
+  const isDeafSelected = preferences.disabilities.includes("deaf");
+
+  // Auto-start Voice Q&A on Step 3 for Blind users, or Chosen-Language AI Reader for Deaf users
+  useEffect(() => {
+    if (step === 3 && isBlindSelected) {
+      const timer = window.setTimeout(() => {
+        startStep3VoiceQa(0);
+      }, 200);
+      return () => {
+        window.clearTimeout(timer);
+        qaRunTokenRef.current += 1;
+        stopActiveListening();
+      };
+    } else if (step === 3 && isDeafSelected && !isBlindSelected) {
+      onTriggerVoice(
+        `${t.onboarding.signInTitle}. ${t.onboarding.signInSubtitle} ${t.onboarding.careerPlanSubtitle}`,
+        preferences.language
+      );
+    } else if (step !== 3) {
+      setVoiceQaActive(false);
+      setListenState("idle");
+    }
+  }, [
+    step,
+    isBlindSelected,
+    isDeafSelected,
+    startStep3VoiceQa,
+    onTriggerVoice,
+    preferences.language,
+    t.onboarding.signInTitle,
+    t.onboarding.signInSubtitle,
+    t.onboarding.careerPlanSubtitle,
+  ]);
+
+  const handleDisabilityClick = async (type: DisabilityType) => {
     const wasSelected = preferences.disabilities.includes(type);
     onToggleDisability(type);
     // Instantly activate the Ethiopian/selected-language voice instructor upon selection
     if (!wasSelected) {
-      const instruction = t.disabilities[type].instantVoiceInstruction;
-      onTriggerVoice(instruction, preferences.language);
+      if (type === "blind") {
+        // Immediate two-way voice start for blind users: speak instruction & listen for "continue"
+        qaRunTokenRef.current += 1;
+        const token = qaRunTokenRef.current;
+        const fullPrompt = `${t.disabilities.blind.instantVoiceInstruction} ${vs.step2BlindIntroAndPrompt}`;
+        await onTriggerVoice(fullPrompt, preferences.language);
+        if (qaRunTokenRef.current !== token || stepRef.current !== 2) return;
+
+        const res = await listenForUserSpeech({
+          language: preferences.language,
+          maxDurationMs: 6500,
+          onStateChange: (st) => {
+            if (qaRunTokenRef.current === token) setListenState(st);
+          },
+        });
+        if (qaRunTokenRef.current !== token || stepRef.current !== 2) return;
+        if (res.micError) setMicError(res.micError);
+        if (res.transcript.trim()) {
+          setLastHeardTranscript(res.transcript.trim());
+          const cmd = await interpretStep2VoiceCommand(
+            res.transcript,
+            preferences.language
+          );
+          if (cmd === "continue" && qaRunTokenRef.current === token) {
+            setStep(3);
+          } else if (cmd === "repeat" && qaRunTokenRef.current === token) {
+            await onTriggerVoice(fullPrompt, preferences.language);
+          }
+        }
+      } else {
+        const instruction = t.disabilities[type].instantVoiceInstruction;
+        onTriggerVoice(instruction, preferences.language);
+      }
     }
   };
 
@@ -100,6 +468,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
       return;
     }
     setFormError("");
+    qaRunTokenRef.current += 1;
+    stopActiveListening();
+    onStopVoice();
     onCompleteOnboarding({
       name: name.trim(),
       email: email.trim() || "learner@accesspath.org",
@@ -108,12 +479,17 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
   };
 
   const handleQuickDemo = () => {
+    qaRunTokenRef.current += 1;
+    stopActiveListening();
+    onStopVoice();
     onCompleteOnboarding({
       name: name.trim() || "Abebe Bikila",
       email: email.trim() || "abebe@accesspath.org",
       careerPlan,
     });
   };
+
+  const activeFieldId = voiceQaActive ? STEP3_QUESTIONS[qaIndex]?.id : null;
 
   const disabilityCards: Array<{
     type: DisabilityType;
@@ -200,51 +576,93 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-10">
-        {/* Live Voice Instructor & Synchronized Caption Strip */}
-        {(voiceStatus.caption || voiceStatus.playing) && (
+        {/* Live Voice Instructor, Mic Listening & Synchronized Caption Strip */}
+        {(voiceStatus.caption || voiceStatus.playing || listenState !== "idle" || isBlindSelected) && (
           <section
             aria-live="polite"
-            aria-label="Voice Instructor Captions"
-            className="mb-8 rounded-lg border border-[#0969DA]/40 dark:border-[#58A6FF]/40 bg-white dark:bg-[#161B22] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+            aria-label="Voice Instructor and Two-Way Voice Controls"
+            className="mb-8 rounded-lg border border-[#0969DA]/40 dark:border-[#58A6FF]/40 bg-white dark:bg-[#161B22] p-4 space-y-3"
           >
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs font-semibold text-[#0969DA] dark:text-[#58A6FF]">
-                <Volume2 className="w-4 h-4" aria-hidden="true" />
-                <span>{t.onboarding.voiceActiveNotice}</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono text-[#656D76] dark:text-[#8B949E]">
-                  {voiceStatus.provider === "addis-ai"
-                    ? "Addis AI Ethiopian Voice"
-                    : voiceStatus.provider === "addis-ai-compatible-gemini"
-                    ? "Ethiopian Voice Instructor"
-                    : "Voice + Captions"}
-                </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-[#0969DA] dark:text-[#58A6FF]">
+                  {listenState === "listening" ? (
+                    <Mic className="w-4 h-4 text-[#1A7F37] dark:text-[#3FB950]" aria-hidden="true" />
+                  ) : (
+                    <Volume2 className="w-4 h-4" aria-hidden="true" />
+                  )}
+                  <span>
+                    {listenState === "listening"
+                      ? vs.listeningLabel
+                      : listenState === "transcribing"
+                      ? vs.transcribingLabel
+                      : voiceStatus.playing
+                      ? vs.speakingLabel
+                      : t.onboarding.voiceActiveNotice}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono text-[#656D76] dark:text-[#8B949E]">
+                    {voiceStatus.provider === "addis-ai"
+                      ? "Addis AI Ethiopian Voice"
+                      : voiceStatus.provider === "addis-ai-compatible-gemini"
+                      ? "Ethiopian Voice Instructor"
+                      : "Voice + Captions"}
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed text-[#1F2328] dark:text-[#E6EDF3]">
+                  {voiceStatus.caption || t.disabilities.blind.instantVoiceInstruction}
+                </p>
+                {lastHeardTranscript && (
+                  <p className="text-xs text-[#1A7F37] dark:text-[#3FB950] font-medium">
+                    Heard: &ldquo;{lastHeardTranscript}&rdquo;
+                  </p>
+                )}
+                {micError && (
+                  <p role="alert" className="text-xs text-[#CF222E] dark:text-[#F85149]">
+                    {micError}
+                  </p>
+                )}
               </div>
-              <p className="text-sm leading-relaxed text-[#1F2328] dark:text-[#E6EDF3]">
-                {voiceStatus.caption}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() =>
-                  onTriggerVoice(voiceStatus.caption, preferences.language)
-                }
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D] hover:bg-[#EAEEF2] dark:hover:bg-[#30363D] whitespace-nowrap"
-              >
-                <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>{t.onboarding.replayVoiceBtn}</span>
-              </button>
-              {voiceStatus.playing && (
-                <button
-                  type="button"
-                  onClick={onStopVoice}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#CF222E]/40 text-[#CF222E] dark:text-[#F85149] hover:bg-[#CF222E]/10 whitespace-nowrap"
-                >
-                  <Square className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>{t.onboarding.stopVoiceBtn}</span>
-                </button>
-              )}
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {listenState === "listening" ? (
+                  <button
+                    type="button"
+                    onClick={finishCurrentListeningNow}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-md bg-[#1A7F37] text-white hover:bg-[#116329] whitespace-nowrap"
+                  >
+                    <MicOff className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>{vs.doneSpeakingBtn}</span>
+                  </button>
+                ) : (
+                  voiceStatus.caption && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onTriggerVoice(voiceStatus.caption, preferences.language)
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D] hover:bg-[#EAEEF2] dark:hover:bg-[#30363D] whitespace-nowrap"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{t.onboarding.replayVoiceBtn}</span>
+                    </button>
+                  )
+                )}
+                {voiceStatus.playing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      qaRunTokenRef.current += 1;
+                      stopActiveListening();
+                      onStopVoice();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#CF222E]/40 text-[#CF222E] dark:text-[#F85149] hover:bg-[#CF222E]/10 whitespace-nowrap"
+                  >
+                    <Square className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>{t.onboarding.stopVoiceBtn}</span>
+                  </button>
+                )}
+              </div>
             </div>
           </section>
         )}
@@ -437,22 +855,124 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
           </section>
         )}
 
-        {/* STEP 3: SIGN IN & CAREER PLAN */}
+        {/* STEP 3: SIGN IN & CAREER PLAN + VOICE Q&A FORM FILLER */}
         {step === 3 && (
           <section aria-labelledby="step3-heading" className="space-y-6">
-            <div className="space-y-2 max-w-2xl">
-              <p className="text-xs font-semibold text-[#0969DA] dark:text-[#58A6FF]">
-                {t.onboarding.step3Label}
-              </p>
-              <h1
-                id="step3-heading"
-                className="text-2xl sm:text-3xl font-bold tracking-tight text-balance"
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+              <div className="space-y-2 max-w-2xl">
+                <p className="text-xs font-semibold text-[#0969DA] dark:text-[#58A6FF]">
+                  {t.onboarding.step3Label}
+                </p>
+                <h1
+                  id="step3-heading"
+                  className="text-2xl sm:text-3xl font-bold tracking-tight text-balance"
+                >
+                  {t.onboarding.signInTitle}
+                </h1>
+                <p className="text-sm sm:text-base text-[#656D76] dark:text-[#8B949E]">
+                  {t.onboarding.signInSubtitle}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  voiceQaActive ? pauseStep3VoiceQa() : startStep3VoiceQa(qaIndex)
+                }
+                className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-lg border whitespace-nowrap shrink-0 ${
+                  voiceQaActive
+                    ? "border-[#CF222E]/40 text-[#CF222E] dark:text-[#F85149] bg-white dark:bg-[#161B22]"
+                    : "border-[#0969DA] bg-[#0969DA] text-white"
+                }`}
               >
-                {t.onboarding.signInTitle}
-              </h1>
-              <p className="text-sm sm:text-base text-[#656D76] dark:text-[#8B949E]">
-                {t.onboarding.signInSubtitle}
-              </p>
+                <Mic className="w-4 h-4" aria-hidden="true" />
+                <span>{voiceQaActive ? vs.pauseVoiceBtn : vs.resumeVoiceBtn}</span>
+              </button>
+            </div>
+
+            {/* Interactive Voice Q&A Bar: Ask -> Listen -> Fill */}
+            <div
+              role="region"
+              aria-label="Voice Question and Answer Controller"
+              className="rounded-lg border border-[#D0D7DE] dark:border-[#30363D] bg-white dark:bg-[#161B22] p-4 space-y-3"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-semibold text-[#0969DA] dark:text-[#58A6FF] flex items-center gap-2">
+                    <span>
+                      Question {qaIndex + 1} of {STEP3_QUESTIONS.length}:{" "}
+                      {STEP3_QUESTIONS[qaIndex]?.label}
+                    </span>
+                  </div>
+                  <p className="text-sm text-[#1F2328] dark:text-[#E6EDF3]">
+                    {vs.questions[STEP3_QUESTIONS[qaIndex].id]}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      qaRunTokenRef.current += 1;
+                      setVoiceQaActive(true);
+                      runVoiceQuestionAt(qaIndex, qaRunTokenRef.current);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-[#0969DA] text-white hover:bg-[#0550AE]"
+                  >
+                    <Mic className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>{vs.answerByVoiceBtn}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onTriggerVoice(
+                        vs.questions[STEP3_QUESTIONS[qaIndex].id],
+                        preferences.language
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[#D0D7DE] dark:border-[#30363D]"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>{vs.repeatBtn}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.min(qaIndex + 1, STEP3_QUESTIONS.length - 1);
+                      if (voiceQaActive) {
+                        qaRunTokenRef.current += 1;
+                        runVoiceQuestionAt(next, qaRunTokenRef.current);
+                      } else {
+                        setQaIndex(next);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[#D0D7DE] dark:border-[#30363D]"
+                  >
+                    <SkipForward className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>{vs.skipBtn}</span>
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={handleFallbackTextAnswer} className="flex gap-2">
+                <label htmlFor="voice-qa-fallback" className="sr-only">
+                  Reply to current voice question
+                </label>
+                <input
+                  id="voice-qa-fallback"
+                  type="text"
+                  value={fallbackAnswerInput}
+                  onChange={(e) => setFallbackAnswerInput(e.target.value)}
+                  placeholder={vs.voiceReplyPlaceholder}
+                  className="flex-1 px-3 py-1.5 text-xs rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#0D1117]"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 text-xs font-medium rounded-md border border-[#D0D7DE] dark:border-[#30363D] hover:bg-[#EAEEF2] dark:hover:bg-[#30363D]"
+                >
+                  {vs.sendVoiceFallbackBtn}
+                </button>
+              </form>
             </div>
 
             <form
@@ -461,7 +981,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
             >
               {/* Sign-in identity fields */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
+                <div
+                  className={`rounded-md p-2 -m-2 transition-colors ${
+                    activeFieldId === "name" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                  }`}
+                >
                   <label
                     htmlFor="learner-name"
                     className="block text-sm font-medium mb-1.5"
@@ -477,7 +1001,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                     className="w-full px-3.5 py-2.5 text-sm rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#0D1117]"
                   />
                 </div>
-                <div>
+                <div
+                  className={`rounded-md p-2 -m-2 transition-colors ${
+                    activeFieldId === "email" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                  }`}
+                >
                   <label
                     htmlFor="learner-email"
                     className="block text-sm font-medium mb-1.5"
@@ -509,7 +1037,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
+                  <div
+                    className={`rounded-md p-2 -m-2 transition-colors ${
+                      activeFieldId === "targetTrack" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                    }`}
+                  >
                     <label
                       htmlFor="career-track"
                       className="block text-sm font-medium mb-1.5"
@@ -532,7 +1064,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                     </select>
                   </div>
 
-                  <div>
+                  <div
+                    className={`rounded-md p-2 -m-2 transition-colors ${
+                      activeFieldId === "targetRole" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                    }`}
+                  >
                     <label
                       htmlFor="target-role"
                       className="block text-sm font-medium mb-1.5"
@@ -551,7 +1087,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                     />
                   </div>
 
-                  <div>
+                  <div
+                    className={`rounded-md p-2 -m-2 transition-colors ${
+                      activeFieldId === "experienceLevel" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                    }`}
+                  >
                     <label
                       htmlFor="experience-level"
                       className="block text-sm font-medium mb-1.5"
@@ -576,7 +1116,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                     </select>
                   </div>
 
-                  <div>
+                  <div
+                    className={`rounded-md p-2 -m-2 transition-colors ${
+                      activeFieldId === "workStyle" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                    }`}
+                  >
                     <label
                       htmlFor="work-style"
                       className="block text-sm font-medium mb-1.5"
@@ -602,7 +1146,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                   </div>
                 </div>
 
-                <div>
+                <div
+                  className={`rounded-md p-2 -m-2 transition-colors ${
+                    activeFieldId === "skills" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                  }`}
+                >
                   <span className="block text-sm font-medium mb-2">
                     {t.onboarding.skillsLabel}
                   </span>
@@ -628,7 +1176,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
                   </div>
                 </div>
 
-                <div>
+                <div
+                  className={`rounded-md p-2 -m-2 transition-colors ${
+                    activeFieldId === "goalStatement" ? "ring-2 ring-[#0969DA] bg-[#0969DA]/5" : ""
+                  }`}
+                >
                   <label
                     htmlFor="career-goal"
                     className="block text-sm font-medium mb-1.5"

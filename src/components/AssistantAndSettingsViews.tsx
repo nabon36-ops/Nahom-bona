@@ -9,7 +9,12 @@ import {
   UserProfile,
 } from "../types";
 import { LANGUAGES, TRANSLATIONS } from "../i18n/translations";
-import { Send, Volume2, RotateCcw } from "lucide-react";
+import {
+  finishCurrentListeningNow,
+  listenForUserSpeech,
+  stopActiveListening,
+} from "../services/voiceService";
+import { Send, Volume2, RotateCcw, Mic, MicOff } from "lucide-react";
 
 interface AssistantViewProps {
   preferences: AccessibilityPreferences;
@@ -24,6 +29,22 @@ interface ChatMessage {
   text: string;
 }
 
+const ASSISTANT_GREETINGS: Record<
+  LanguageCode,
+  (role: string, track: string) => string
+> = {
+  en: (role, track) =>
+    `Ready to support your Career Plan (${role} · ${track}). Ask me by text or microphone audio to analyze skill gaps, recommend Savannah courses, or build a weekly study plan.`,
+  am: (role, track) =>
+    `የሥራ ዕቅድዎን (${role} · ${track}) ለመደገፍ ዝግጁ ነኝ። በጽሑፍ ወይም በማይክሮፎን ድምፅ ስለ ክህሎት ክፍተቶች፣ ስለ ሳቫና ኮርሶች እና ስለ ሳምንታዊ የጥናት ዕቅድ በአማርኛ ይጠይቁኝ።`,
+  om: (role, track) =>
+    `Karoora hojii keessan (${role} · ${track}) deeggaruuf qophiidha. Barreeffamaan ykn sagaleedhaan koorsiiwwan Savannah fi ogummaawwan isin barbaachisan Afaan Oromootiin na gaafadhaa.`,
+  so: (role, track) =>
+    `Waxaan diyaar u ahay inaan taageero Qorshahaaga Shaqo (${role} · ${track}). Igu weydii qoraal ama cod Af-Soomaali ah koorsooyinka Savannah iyo xirfadaha aad u baahan tahay.`,
+  ti: (role, track) =>
+    `መደብ ስራሕካ (${role} · ${track}) ንምድጋፍ ድሉው እየ። ብጽሑፍ ወይ ብድምጺ ብዛዕባ ክእለታትን ኮርሳት ሳቫናን ብትግርኛ ሕተተኒ።`,
+};
+
 export const AssistantView: React.FC<AssistantViewProps> = ({
   preferences,
   user,
@@ -34,11 +55,16 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      text: `Ready to support your Career Plan (${user.careerPlan.targetRole} · ${user.careerPlan.targetTrack}). Ask me to analyze skill gaps, recommend Savannah courses, or build a weekly study plan.`,
+      text: ASSISTANT_GREETINGS[preferences.language](
+        user.careerPlan.targetRole,
+        user.careerPlan.targetTrack
+      ),
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [micState, setMicState] = useState<"idle" | "listening" | "transcribing">("idle");
+  const [micNote, setMicNote] = useState("");
 
   const sendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || loading) return;
@@ -76,10 +102,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
       });
       if (res.ok) {
         const data = (await res.json()) as { reply?: string };
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: data.reply || "No response received." },
-        ]);
+        const reply = data.reply || "No response received.";
+        setMessages((prev) => [...prev, { role: "assistant", text: reply }]);
+        if (preferences.disabilities.includes("blind")) {
+          onSpeakText(reply);
+        }
       } else {
         setMessages((prev) => [
           ...prev,
@@ -91,6 +118,31 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleVoiceAsk = async () => {
+    setMicNote("");
+    if (micState === "listening") {
+      finishCurrentListeningNow();
+      return;
+    }
+    const res = await listenForUserSpeech({
+      language: preferences.language,
+      maxDurationMs: 8000,
+      translateToChosenLanguage: true,
+      onStateChange: setMicState,
+    });
+    if (res.micError) {
+      setMicNote(res.micError);
+      return;
+    }
+    const chosenText = (res.localizedTranscript || res.transcript || "").trim();
+    if (chosenText) {
+      setInput(chosenText);
+      await sendMessage(chosenText);
+    } else {
+      stopActiveListening();
     }
   };
 
@@ -164,6 +216,12 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           )}
         </div>
 
+        {micNote && (
+          <p role="alert" className="text-xs text-[#CF222E] dark:text-[#F85149]">
+            {micNote}
+          </p>
+        )}
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -179,9 +237,32 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about career goals, courses, or skill gaps..."
+            placeholder="Ask by typing or speaking about career goals, courses, or skill gaps..."
             className="flex-1 px-3.5 py-2.5 text-sm rounded-md border border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#0D1117]"
           />
+          <button
+            type="button"
+            onClick={handleVoiceAsk}
+            disabled={loading || micState === "transcribing"}
+            aria-label={micState === "listening" ? "Done speaking" : "Ask by voice"}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm font-medium rounded-md border ${
+              micState === "listening"
+                ? "border-[#1A7F37] bg-[#1A7F37] text-white"
+                : "border-[#D0D7DE] dark:border-[#30363D] bg-[#F6F8FA] dark:bg-[#21262D]"
+            }`}
+          >
+            {micState === "listening" ? (
+              <>
+                <MicOff className="w-4 h-4" aria-hidden="true" />
+                <span>Done</span>
+              </>
+            ) : (
+              <>
+                <Mic className="w-4 h-4" aria-hidden="true" />
+                <span>{micState === "transcribing" ? "..." : "Voice"}</span>
+              </>
+            )}
+          </button>
           <button
             type="submit"
             disabled={loading}

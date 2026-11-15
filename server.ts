@@ -416,6 +416,354 @@ Keep it authentic, crisp, and ready to copy-paste. Do not claim automated Linked
     }
   });
 
+  const translationCache = new Map<string, string>();
+
+  // Multilingual Speech-to-Text Endpoint (Gemini Audio Transcription)
+  app.post("/api/stt", async (req, res) => {
+    const {
+      audioBase64,
+      mimeType = "audio/webm",
+      language = "en",
+      translateToChosenLanguage = false,
+    } = req.body as {
+      audioBase64?: string;
+      mimeType?: string;
+      language?: string;
+      translateToChosenLanguage?: boolean;
+    };
+
+    if (!audioBase64 || typeof audioBase64 !== "string") {
+      res.status(400).json({ error: "Audio recording is required." });
+      return;
+    }
+
+    if (!ai) {
+      res.json({
+        transcript: "",
+        localizedTranscript: "",
+        unavailable: true,
+        provider: "browser-speech-only",
+      });
+      return;
+    }
+
+    try {
+      const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, "");
+      const cleanMime = mimeType.split(";")[0].trim() || "audio/webm";
+      const targetLang = LANGUAGE_NAMES[language] || "English";
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-transcribe",
+        contents: [
+          {
+            text: `Transcribe the user's spoken words accurately. The user's selected platform language is ${targetLang}, though they may speak English terms (like email addresses, React, TypeScript, Courses, Jobs, Dashboard). Return ONLY the exact transcribed text with no extra commentary, quotes, or timestamps. If no clear speech is audible, return an empty string.`,
+          },
+          {
+            inlineData: {
+              mimeType: cleanMime,
+              data: cleanBase64,
+            },
+          },
+        ],
+      });
+
+      const transcript = (response.text || "").trim();
+      let localizedTranscript = transcript;
+
+      if (translateToChosenLanguage && transcript) {
+        try {
+          const transRes = await ai.models.generateContent({
+            model: "gemini-4-hydrogen",
+            contents: `Translate or normalize this spoken transcript into clear, natural ${targetLang}. If it is already in ${targetLang}, return it cleanly in ${targetLang}. Return ONLY the translated text.\n\nTranscript: ${transcript}`,
+          });
+          localizedTranscript = (transRes.text || transcript).trim();
+        } catch {
+          localizedTranscript = transcript;
+        }
+      }
+
+      res.json({
+        transcript,
+        localizedTranscript,
+        language,
+        provider: "gemini-transcribe",
+      });
+    } catch (err) {
+      console.error("STT API error:", err);
+      res.status(500).json({ error: "Speech transcription failed." });
+    }
+  });
+
+  // AI Translation Endpoint for chosen-language reading & captions
+  app.post("/api/translate", async (req, res) => {
+    const { text, language = "en" } = req.body as {
+      text?: string;
+      language?: string;
+    };
+
+    if (!text || typeof text !== "string" || !text.trim()) {
+      res.status(400).json({ error: "Text is required." });
+      return;
+    }
+
+    const clean = text.trim();
+    if (language === "en" || !ai) {
+      res.json({ translatedText: clean, provider: ai ? "passthrough" : "demo" });
+      return;
+    }
+
+    const cacheKey = `${language}::${clean}`;
+    const cached = translationCache.get(cacheKey);
+    if (cached) {
+      res.json({ translatedText: cached, provider: "gemini-cache" });
+      return;
+    }
+
+    try {
+      const targetLang = LANGUAGE_NAMES[language] || "English";
+      const response = await ai.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: `Translate the following accessibility/education text naturally and accurately into ${targetLang}. Keep technical terms (like React, TypeScript, HTML, CSS, WCAG, AccessPath, Savannah, LinkedIn) clear, and return ONLY the translated text without quotes or explanations.\n\nText: ${clean}`,
+      });
+      const translatedText = (response.text || clean).trim();
+      translationCache.set(cacheKey, translatedText);
+      res.json({ translatedText, provider: "gemini" });
+    } catch (err) {
+      console.warn("Translation fallback:", err);
+      res.json({ translatedText: clean, provider: "fallback" });
+    }
+  });
+
+  // AI Chosen-Language Page Reader & Deaf/Multilingual Communicator
+  app.post("/api/ai-communicate", async (req, res) => {
+    const {
+      language = "en",
+      view = "dashboard",
+      isDeaf = false,
+      isBlind = false,
+      userName = "Learner",
+      careerPlan = {},
+      pageSummary = "",
+      userMessage = "",
+    } = req.body as {
+      language?: string;
+      view?: string;
+      isDeaf?: boolean;
+      isBlind?: boolean;
+      userName?: string;
+      careerPlan?: { targetRole?: string; targetTrack?: string; skills?: string[] };
+      pageSummary?: string;
+      userMessage?: string;
+    };
+
+    const targetLang = LANGUAGE_NAMES[language] || "English";
+
+    if (!ai) {
+      const demoReplies: Record<string, string> = {
+        en: `AI Guide (${view}): ${pageSummary}`,
+        am: `የAI ቋንቋ መምሪያ (${view})፡ ሰላም ${userName}። የሥራ ዕቅድዎ ${careerPlan.targetRole || "ቴክኖሎጂ"} ላይ ያተኩራል። ${pageSummary}`,
+        om: `Qajeelfama AI (${view}): Akkam ${userName}. Karoorri hojii kee ${careerPlan.targetRole || "teeknooloojii"} irratti xiyyeeffata. ${pageSummary}`,
+        so: `Hagaha AI (${view}): Soo dhawoow ${userName}. Qorshahaaga shaqo wuxuu beegsanayaa ${careerPlan.targetRole || "tiknoolajiyada"}. ${pageSummary}`,
+        ti: `AI መምርሒ (${view})፡ ሰላም ${userName}። መደብ ስራሕካ ${careerPlan.targetRole || "ቴክኖሎጂ"} እዩ። ${pageSummary}`,
+      };
+      res.json({
+        reply: demoReplies[language] || demoReplies.en,
+        provider: "demo",
+      });
+      return;
+    }
+
+    try {
+      const systemInstruction = [
+        `You are the AccessPath Multilingual AI Communicator & Accessible Page Reader.`,
+        `CRITICAL: Respond 100% exclusively in ${targetLang} (use natural ${targetLang} script/alphabet, e.g. Ethiopic Fidäl for Amharic and Tigrinya, Qubee for Afaan Oromo, Somali orthography for Somali).`,
+        `User profile: Name="${userName}", Deaf/Hard-of-Hearing=${isDeaf}, Blind/Low-Vision=${isBlind}, Target Role="${careerPlan.targetRole || "Tech Specialist"}", Track="${careerPlan.targetTrack || "Software"}".`,
+        isDeaf
+          ? `Because the user is Deaf or Hard of Hearing, present clear, scannable written sentences in ${targetLang} that directly read and explain what is on the screen and invite their response via sign, transcribed speech, or text.`
+          : `Present clear, supportive communication in ${targetLang}.`,
+        `Current view: "${view}". Page content summary: ${pageSummary}`,
+      ].join("\n");
+
+      const prompt = userMessage.trim()
+        ? `User says: "${userMessage.trim()}". Reply helpfully in ${targetLang} based on their current page (${view}) and Career Plan.`
+        : `Read and summarize the visible texts and main actions of the "${view}" page clearly in ${targetLang} for ${userName}, and invite them to reply or ask anything.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: prompt,
+        config: { systemInstruction },
+      });
+
+      res.json({
+        reply: (response.text || "").trim(),
+        provider: "gemini",
+      });
+    } catch (err) {
+      console.error("AI communicate error:", err);
+      res.status(500).json({ error: "AI communication failed." });
+    }
+  });
+
+  // Voice Intent & Structured Answer Extraction Endpoint
+  app.post("/api/voice-intent", async (req, res) => {
+    const {
+      transcript,
+      language = "en",
+      mode = "navigation",
+      fieldContext,
+      currentView = "dashboard",
+      contextSummary = "",
+    } = req.body as {
+      transcript?: string;
+      language?: string;
+      mode?: "onboarding_field" | "navigation" | "onboarding_step2";
+      fieldContext?: {
+        fieldId: string;
+        label: string;
+        options?: string[];
+        multi?: boolean;
+      };
+      currentView?: string;
+      contextSummary?: string;
+    };
+
+    if (!transcript || !transcript.trim()) {
+      res.status(400).json({ error: "Transcript is required." });
+      return;
+    }
+
+    const targetLang = LANGUAGE_NAMES[language] || "English";
+
+    if (!ai) {
+      res.json({
+        fallbackToLocal: true,
+        provider: "local-parser",
+      });
+      return;
+    }
+
+    try {
+      if (mode === "onboarding_field" && fieldContext) {
+        const optionsNote = fieldContext.options?.length
+          ? `Allowed options: ${fieldContext.options.join(", ")}.`
+          : "Free text field.";
+
+        const prompt = `You are helping a blind or visually impaired user fill a form field by voice in ${targetLang}.
+Field ID: "${fieldContext.fieldId}"
+Field Label: "${fieldContext.label}"
+Multi-select: ${Boolean(fieldContext.multi)}
+${optionsNote}
+User spoken transcript: "${transcript}"
+
+Interpret the user's spoken input:
+- If they want to skip, go next, go back, repeat the question, or submit the form, set command to "next", "back", "repeat", or "submit".
+- Otherwise set command to "fill" and extract the clean answer into filledValue (for example, strip phrases like "my name is" or "I want", normalize spoken email like "abebe at gmail dot com" -> "abebe@gmail.com", and for options pick the closest exact option string(s)).
+- For multi-select skills, also populate matchedItems with matching option strings.
+- Provide a brief confirmationText in ${targetLang}.`;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-4-hydrogen",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                command: {
+                  type: Type.STRING,
+                  description: "One of: fill, next, back, repeat, submit",
+                },
+                filledValue: { type: Type.STRING },
+                matchedItems: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                confirmationText: { type: Type.STRING },
+              },
+              required: ["command", "filledValue", "matchedItems", "confirmationText"],
+            },
+          },
+        });
+
+        const parsed = JSON.parse(response.text || "{}");
+        res.json({ ...parsed, provider: "gemini" });
+        return;
+      }
+
+      if (mode === "onboarding_step2") {
+        const prompt = `A blind user just selected accessibility options on step 2 in ${targetLang}.
+User transcript: "${transcript}"
+Did they say to continue/go to sign-in/next step ("continue"), repeat ("repeat"), or select another option ("stay")?
+Return JSON with command ("continue" | "repeat" | "stay") and confirmationText in ${targetLang}.`;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-4-hydrogen",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                command: { type: Type.STRING },
+                confirmationText: { type: Type.STRING },
+              },
+              required: ["command", "confirmationText"],
+            },
+          },
+        });
+        const parsed = JSON.parse(response.text || "{}");
+        res.json({ ...parsed, provider: "gemini" });
+        return;
+      }
+
+      // Hierarchical navigation mode
+      const navPrompt = `You are the AccessPath voice navigation assistant speaking ${targetLang}.
+Current page view: "${currentView}".
+Visible items summary: ${contextSummary}
+User spoken command: "${transcript}"
+
+Map the user's request to one action:
+- "navigate": open one of these views: "dashboard", "courses", "resources", "progress", "jobs", "tracker", "linkedin", "assistant", "settings"
+- "read_major_options": read the numbered list of major sections again
+- "read_specific": read the specific items on the current view
+- "enroll_course": enroll in course number 1, 2, or 3 (set itemNumber)
+- "complete_lesson": complete the next lesson in their active course
+- "save_job": bookmark/save job number 1, 2, or 3 (set itemNumber)
+- "apply_job": mark job number 1, 2, or 3 as Applied (set itemNumber)
+- "check_in": record daily learning check-in
+- "ask_ai": the user is asking a general career/learning question (put question in queryText)
+- "stop": pause/stop voice assistant listening
+- "unknown": unclear command
+
+Respond in JSON with a helpful short replyText in ${targetLang}.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: navPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING },
+              targetView: { type: Type.STRING },
+              itemNumber: { type: Type.INTEGER },
+              queryText: { type: Type.STRING },
+              replyText: { type: Type.STRING },
+            },
+            required: ["action", "targetView", "itemNumber", "queryText", "replyText"],
+          },
+        },
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      res.json({ ...parsed, provider: "gemini" });
+    } catch (err) {
+      console.error("Voice intent error:", err);
+      res.json({ fallbackToLocal: true, provider: "local-parser" });
+    }
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
